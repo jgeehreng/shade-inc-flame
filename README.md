@@ -49,9 +49,11 @@ This package provides several Python scripts that integrate Shade's review and c
 
 3. **First-time setup**: Launch Flame and use the config editor to set up your Shade API key and workspace.
 
-## Configuration
+## User Configuration
+<img width="642" height="516" alt="user_settings" src="https://github.com/user-attachments/assets/359a3829-2ece-4547-8913-6db335c4f50d" />
 
 ### Global Configuration
+<img width="648" height="517" alt="global_settings" src="https://github.com/user-attachments/assets/58c25bd8-e3f1-4fca-b388-02b9aebca1c7" />
 
 Global settings are stored at:
 ```
