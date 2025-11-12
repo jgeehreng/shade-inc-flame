@@ -10,7 +10,7 @@ This package provides several Python scripts that integrate Shade's review and c
 - **Conform Uploads**: Automated upload of conform sequences to Shade
 - **MediaHub Uploads**: Direct upload of files/folders from Flame's MediaHub
 - **Comment Synchronization**: Fetch comments from Shade and create Flame markers
-- **Automatic Versioning**: Smart version increment based on existing Shade assets
+- **Automatic Versioning**: The API for this doesn't work yet as it's a new feature for them.
 
 ## Requirements
 
