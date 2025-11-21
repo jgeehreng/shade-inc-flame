@@ -6,6 +6,7 @@ Fetches comments from Shade for the selected sequence or segment and adds Flame 
 """
 
 import flame
+import os
 import re
 import traceback
 from PySide6 import QtWidgets
@@ -99,7 +100,8 @@ def get_clip_and_fps(selection):
         # Flame PySequence
         if isinstance(item, flame.PySequence):
             fps = _extract_fps(item.frame_rate)
-            asset_name = str(item.name)
+            raw_name = str(item.name)[1:-1]
+            asset_name = raw_name.strip()
             return item, fps, asset_name
 
         # Flame PySegment
@@ -107,7 +109,8 @@ def get_clip_and_fps(selection):
             try:
                 parent_sequence = item.parent.parent.parent
                 fps = _extract_fps(parent_sequence.frame_rate)
-                asset_name = str(parent_sequence.name)
+                raw_name = str(parent_sequence.name)[1:-1]
+                asset_name = raw_name.strip()
                 return item, fps, asset_name
             except Exception:
                 pass
@@ -127,7 +130,7 @@ def shade_get_comments(selection):
         api_key = cfg.get("shade_api_key") or cfg.get("api_key")
         project_token = str(flame.projects.current_project.nickname)
         drive_id = get_or_create_drive(cfg, project_token)
-        log(f"→ Connected to Shade (drive: {drive_id}, project: {project_token})")
+        log(f"Connected to Shade (drive: {drive_id}, project: {project_token})")
 
         total_markers = 0
         total_items_with_comments = 0
@@ -141,17 +144,32 @@ def shade_get_comments(selection):
             # --- Use cache if available ---
             if asset_name in comment_cache:
                 comments = comment_cache[asset_name]
-                log(f"🕳️ Using cached comments for '{asset_name}'")
+                log(f"Using cached comments for '{asset_name}'")
             else:
                 results = search_shade_assets(api_key, drive_id, asset_name)
                 if not results:
-                    log(f"⚠️ No Shade asset found for {asset_name}")
+                    log(f"WARNING: No Shade asset found for {asset_name}")
                     continue
 
-                asset_id = results[0]
+                # Strip extensions from all results and check for exact match
+                cleaned_results = []
+                for r in results:
+                    shade_name = r.get("name", "")
+                    no_ext = os.path.splitext(shade_name)[0]  # strip .mp4, .mov, etc
+                    cleaned_results.append(no_ext)
+
+                # Find exact match
+                exact_match_found = asset_name in cleaned_results
+                if not exact_match_found:
+                    log(f"WARNING: No exact match found for '{asset_name}' in search results")
+                    continue
+
+                # Get the matching asset (find the index and use corresponding result)
+                match_index = cleaned_results.index(asset_name)
+                asset_id = results[match_index]
                 comments = get_asset_comments(api_key, drive_id, asset_id)
                 comment_cache[asset_name] = comments
-                log(f"… {len(comments)} comment(s) for '{asset_name}'")
+                log(f"Retrieved {len(comments)} comment(s) for '{asset_name}'")
 
             if not comments:
                 continue
@@ -181,10 +199,10 @@ def shade_get_comments(selection):
                     if not seq_start_tc:
                         seq_start_tc = str(parent_sequence.start_time).replace("+", ":")
                     offset_frames = timecode_to_frames(seq_start_tc, fps)
-                    log(f"📽️ Sequence start timecode: {seq_start_tc} → offset {offset_frames} frames")
+                    log(f"Sequence start timecode: {seq_start_tc} -> offset {offset_frames} frames")
                 except Exception as e:
                     offset_frames = int(round(3600 * fps))
-                    log(f"⚠️ Offset fallback (1h): {offset_frames} frames ({e})")
+                    log(f"WARNING: Offset fallback (1h): {offset_frames} frames ({e})")
 
             # --- Add markers ---
             for c in comments:
@@ -200,7 +218,7 @@ def shade_get_comments(selection):
                 # Skip markers outside segment range
                 if is_segment and seg_rec_in is not None and seg_rec_out is not None:
                     if adjusted_frame < seg_rec_in or adjusted_frame > seg_rec_out:
-                        log(f"⚠️ Skipping comment outside segment range ({adjusted_frame} not in {seg_rec_in}-{seg_rec_out})")
+                        log(f"WARNING: Skipping comment outside segment range ({adjusted_frame} not in {seg_rec_in}-{seg_rec_out})")
                         continue
 
                 try:
@@ -222,14 +240,14 @@ def shade_get_comments(selection):
                         marker.colour = (0.1137, 0.2627, 0.1764)
                     marker.comment = content
 
-                    # 🎬 Apply duration (seconds → frames) if present
+                    # Apply duration (seconds -> frames) if present
                     duration_sec = c.get("duration")
                     if duration_sec:
                         try:
                             marker.duration = int(round(float(duration_sec) * fps))
-                            log(f"⏱️ Set duration={marker.duration} frames for '{asset_name}'")
+                            log(f"Set duration={marker.duration} frames for '{asset_name}'")
                         except Exception as e:
-                            log(f"⚠️ Could not set duration for marker: {e}")
+                            log(f"WARNING: Could not set duration for marker: {e}")
 
                     # Color the item itself
                     total_markers_this_item += 1
@@ -240,10 +258,10 @@ def shade_get_comments(selection):
                         item.colour = (0.1137, 0.2627, 0.1764)
 
                 except Exception as e:
-                    log(f"⚠️ Could not create marker at frame {adjusted_frame}: {e}")
+                    log(f"WARNING: Could not create marker at frame {adjusted_frame}: {e}")
 
             total_markers += total_markers_this_item
-            log(f"✅ Added {total_markers_this_item} comment marker(s) for '{asset_name}'")
+            log(f"Added {total_markers_this_item} comment marker(s) for '{asset_name}'")
 
             # If this was a segment and we successfully added any markers,
             # color its parent sequence as "Address Comments" and set item.comment
@@ -269,10 +287,10 @@ def shade_get_comments(selection):
         if total_items_with_comments == 0:
             show_message("No comments found on Shade for any selected items.")
         else:
-            show_message(f"✅ Added {total_markers} markers across {total_items_with_comments} item(s).")
+            show_message(f"Added {total_markers} markers across {total_items_with_comments} item(s).")
 
     except Exception as e:
-        log(f"❌ Failed: {e}\n{traceback.format_exc()}")
+        log(f"ERROR: Failed: {e}\n{traceback.format_exc()}")
         show_message(f"Error: {e}")
 
 # ----------------------------------------------------------
