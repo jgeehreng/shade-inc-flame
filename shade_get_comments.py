@@ -158,6 +158,7 @@ def shade_get_comments(selection):
 
             total_items_with_comments += 1
             total_markers_this_item = 0
+            combined_texts = []  # Collect all comment texts for segment comment field
 
             # --- Segment timing info ---
             is_segment = isinstance(item, flame.PySegment)
@@ -203,7 +204,8 @@ def shade_get_comments(selection):
                         continue
 
                 try:
-                    marker = clip.create_marker(int(adjusted_frame))
+                    # marker = clip.create_marker(int(adjusted_frame))
+                    marker = clip.create_marker(int(frame_num))
                     author = c.get("author", "Unknown")
                     content = (c.get("content") or "").strip()
                     replies = c.get("replies", [])
@@ -229,8 +231,9 @@ def shade_get_comments(selection):
                         except Exception as e:
                             log(f"⚠️ Could not set duration for marker: {e}")
 
-                    # 🎨 Color the item itself
+                    # Color the item itself
                     total_markers_this_item += 1
+                    combined_texts.append(content)  # Collect comment text for segment comment field
                     try:
                         item.colour_label = "Address Comments"
                     except Exception:
@@ -242,8 +245,8 @@ def shade_get_comments(selection):
             total_markers += total_markers_this_item
             log(f"✅ Added {total_markers_this_item} comment marker(s) for '{asset_name}'")
 
-            # 🔹 If this was a segment and we successfully added any markers,
-            # color its parent sequence as "Address Comments"
+            # If this was a segment and we successfully added any markers,
+            # color its parent sequence as "Address Comments" and set item.comment
             if is_segment and total_markers_this_item > 0:
                 try:
                     parent_sequence = item.parent.parent.parent
@@ -251,9 +254,17 @@ def shade_get_comments(selection):
                         parent_sequence.colour_label = "Address Comments"
                     except Exception:
                         parent_sequence.colour = (0.1137, 0.2627, 0.1764)
-                    log(f"🟩 Colored parent sequence for segment '{asset_name}'")
+                    log(f"Colored parent sequence for segment '{asset_name}'")
                 except Exception as e:
-                    log(f"⚠️ Could not color parent sequence: {e}")
+                    log(f"WARNING: Could not color parent sequence: {e}")
+                
+                # Combine all comment texts into item.comment
+                if combined_texts:
+                    try:
+                        item.comment = "\n\n".join(combined_texts)
+                        log(f"Set item.comment with {len(combined_texts)} comment(s) for segment '{asset_name}'")
+                    except Exception as e:
+                        log(f"WARNING: Could not set item.comment: {e}")
 
         if total_items_with_comments == 0:
             show_message("No comments found on Shade for any selected items.")

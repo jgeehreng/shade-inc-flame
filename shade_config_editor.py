@@ -43,7 +43,7 @@ def load_json(path, fallback=None):
             with open(path) as f:
                 return json.load(f)
     except Exception as e:
-        log(f"⚠️ Error loading {path}: {e}")
+        log(f"Error loading {path}: {e}")
     return fallback or {}
 
 
@@ -52,7 +52,7 @@ def save_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
-    log(f"💾 Saved {path}")
+    log(f"Saved {path}")
 
 
 def validate_api_key(api_key: str):
@@ -141,9 +141,33 @@ class ShadeConfigEditor(QtWidgets.QDialog):
         # NEW: debug checkbox
         self.g_debug = QtWidgets.QCheckBox("Enable verbose Shade debug logging")
 
-        g_layout.addRow("Jobs Folder:", self.g_jobs_folder)
-        g_layout.addRow("H.264 Preset Path:", self.g_h264)
-        g_layout.addRow("ProRes Preset Path:", self.g_prores)
+        # Jobs folder row with browse button
+        jobs_row = QtWidgets.QHBoxLayout()
+        jobs_row.addWidget(self.g_jobs_folder)
+        jobs_browse_btn = QtWidgets.QPushButton("Browse...")
+        jobs_browse_btn.setFixedWidth(80)
+        jobs_browse_btn.clicked.connect(lambda: self.browse_jobs_folder())
+        jobs_row.addWidget(jobs_browse_btn)
+
+        # H.264 preset row with browse button
+        h264_row = QtWidgets.QHBoxLayout()
+        h264_row.addWidget(self.g_h264)
+        h264_browse_btn = QtWidgets.QPushButton("Browse...")
+        h264_browse_btn.setFixedWidth(80)
+        h264_browse_btn.clicked.connect(lambda: self.browse_h264_preset())
+        h264_row.addWidget(h264_browse_btn)
+
+        # ProRes preset row with browse button
+        prores_row = QtWidgets.QHBoxLayout()
+        prores_row.addWidget(self.g_prores)
+        prores_browse_btn = QtWidgets.QPushButton("Browse...")
+        prores_browse_btn.setFixedWidth(80)
+        prores_browse_btn.clicked.connect(lambda: self.browse_prores_preset())
+        prores_row.addWidget(prores_browse_btn)
+
+        g_layout.addRow("Jobs Folder:", jobs_row)
+        g_layout.addRow("H.264 Preset Path:", h264_row)
+        g_layout.addRow("ProRes Preset Path:", prores_row)
         g_layout.addRow("Shade API Base URL:", self.g_base_url)
         g_layout.addRow("Project Token:", self.g_project_token)
         g_layout.addRow("Debug Mode:", self.g_debug)
@@ -233,6 +257,66 @@ class ShadeConfigEditor(QtWidgets.QDialog):
         self.populate_fields()
 
     # ------------------------------------------------------
+    def browse_jobs_folder(self):
+        """Browse for jobs folder directory."""
+        current_path = self.g_jobs_folder.text().strip()
+        if not current_path or not os.path.isdir(current_path):
+            current_path = str(Path.home())
+        
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "Select Jobs Folder",
+            current_path,
+            QtWidgets.QFileDialog.ShowDirsOnly | QtWidgets.QFileDialog.DontResolveSymlinks
+        )
+        if folder:
+            self.g_jobs_folder.setText(folder)
+
+    # ------------------------------------------------------
+    def browse_h264_preset(self):
+        """Browse for H.264 preset file."""
+        current_path = self.g_h264.text().strip()
+        if not current_path or not os.path.isfile(current_path):
+            # Default to common preset locations
+            default_dir = "/opt/Autodesk/shared/flame_presets"
+            if not os.path.isdir(default_dir):
+                default_dir = "/opt/Autodesk/presets"
+            if not os.path.isdir(default_dir):
+                default_dir = str(Path.home())
+            current_path = default_dir
+        
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select H.264 Preset File",
+            current_path,
+            "XML Files (*.xml);;JSON Files (*.json);;All Files (*)"
+        )
+        if file_path:
+            self.g_h264.setText(file_path)
+
+    # ------------------------------------------------------
+    def browse_prores_preset(self):
+        """Browse for ProRes preset file."""
+        current_path = self.g_prores.text().strip()
+        if not current_path or not os.path.isfile(current_path):
+            # Default to common preset locations
+            default_dir = "/opt/Autodesk/shared/flame_presets"
+            if not os.path.isdir(default_dir):
+                default_dir = "/opt/Autodesk/presets"
+            if not os.path.isdir(default_dir):
+                default_dir = str(Path.home())
+            current_path = default_dir
+        
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select ProRes Preset File",
+            current_path,
+            "XML Files (*.xml);;JSON Files (*.json);;All Files (*)"
+        )
+        if file_path:
+            self.g_prores.setText(file_path)
+
+    # ------------------------------------------------------
     def validate_key_clicked(self):
         api_key = self.u_api_key.text().strip()
         if not api_key:
@@ -278,7 +362,7 @@ class ShadeConfigEditor(QtWidgets.QDialog):
         save_json(GLOBAL_CONFIG_PATH, self.global_cfg)
         save_json(USER_CONFIG_PATH, self.user_cfg)
         QtWidgets.QMessageBox.information(
-            self, "Saved ✅", "Global and User settings saved successfully."
+            self, "Saved", "Global and User settings saved successfully."
         )
 
 
@@ -290,7 +374,7 @@ def launch_editor(*args, **kwargs):
         dlg = ShadeConfigEditor()
         dlg.exec()
     except Exception as e:
-        print(f"[Shade Config Editor] ❌ Failed to launch: {e}")
+        print(f"[Shade Config Editor] Failed to launch: {e}")
 
 
 def get_main_menu_custom_ui_actions():
