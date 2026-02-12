@@ -17,8 +17,9 @@ from PySide6 import QtWidgets, QtCore
 
 import lib.shade_api as shade_api  # uses your latest working shade_api
 
-SCRIPT_NAME = "Shade MediaHub Uploader"
-VERSION = "v1.3.0"
+FOLDER_NAME = "UC Shade"
+SCRIPT_NAME = "Uploader to Shade"
+VERSION = "v1.3.1"
 
 
 # ----------------------------------------------------------
@@ -55,7 +56,7 @@ class ShadeMediaHubProgress(QtWidgets.QDialog):
         self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
         self.layout = QtWidgets.QVBoxLayout(self)
 
-        self.label = QtWidgets.QLabel("Preparing upload…")
+        self.label = QtWidgets.QLabel("Preparing upload.")
         self.file_progress = QtWidgets.QProgressBar()
         self.total_progress = QtWidgets.QProgressBar()
         self.total_progress.setRange(0, max(total_files, 1))
@@ -76,19 +77,19 @@ class ShadeMediaHubProgress(QtWidgets.QDialog):
         self.total_progress.setValue(idx - 1)
         self.file_progress.setValue(0)
         base = os.path.basename(path) if path else ""
-        self.label.setText(f"Uploading {base} ({idx}/{total})…")
+        self.label.setText(f"Uploading {base} ({idx}/{total}).")
         QtWidgets.QApplication.processEvents()
 
     def finish(self):
         self.total_progress.setValue(self.total_progress.maximum())
         self.file_progress.setValue(100)
-        self.label.setText("✅ All uploads complete!")
+        self.label.setText("All uploads complete!")
         QtWidgets.QApplication.processEvents()
         QtCore.QTimer.singleShot(1500, self.accept)
 
 
 # ----------------------------------------------------------
-# MediaHub item → file(s)
+# MediaHub item -> file(s)
 # ----------------------------------------------------------
 def _collect_paths_from_mediahub_item(item, out_list):
     """
@@ -125,7 +126,7 @@ def _collect_paths_from_mediahub_item(item, out_list):
 
     # 3) Fallback
     name = getattr(item, "name", str(item))
-    log(f"⚠️ Skipping MediaHub item (no path): {name}")
+    log(f"Skipping MediaHub item (no path): {name}")
 
 def collect_paths_from_selection(selection):
     files = []
@@ -177,7 +178,7 @@ def start_mediahub_upload(selection):
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
         )
         if reply != QtWidgets.QMessageBox.Yes:
-            log("❌ Upload canceled.")
+            log("Upload canceled.")
             return
 
         # progress dialog
@@ -195,7 +196,7 @@ def start_mediahub_upload(selection):
         common_root = os.path.commonpath(files)
         if not os.path.isdir(common_root):
             common_root = os.path.dirname(common_root)
-        log(f"📁 Common root for structure preservation: {common_root}")
+        log(f"Common root for structure preservation: {common_root}")
 
         uploaded_ok = 0
         for idx, local_path in enumerate(files, 1):
@@ -207,7 +208,7 @@ def start_mediahub_upload(selection):
 
                 # Build a structured destination path under /CONFORMS
                 dest_path = f"/CONFORMS/{rel_path}"
-                log(f"⬆️ Uploading {local_path} → {dest_path}")
+                log(f"Uploading {local_path} -> {dest_path}")
 
                 # Call upload_to_shade with explicit dest_path
                 shade_api.upload_to_shade(
@@ -219,19 +220,19 @@ def start_mediahub_upload(selection):
                 )
                 uploaded_ok += 1
             except Exception as e:
-                log(f"❌ Failed to upload {local_path}: {e}")
+                log(f"Failed to upload {local_path}: {e}")
                 show_toast(f"Upload failed: {os.path.basename(local_path)}", 3)
 
 
         progress.finish()
-        show_toast(f"✅ Uploaded {uploaded_ok}/{len(files)} file(s) to Shade.", 4)
-        log("🎉 MediaHub upload complete.")
+        show_toast(f"Uploaded {uploaded_ok}/{len(files)} file(s) to Shade.", 4)
+        log("MediaHub upload complete.")
 
     except Exception as e:
-        log(f"❌ Fatal error: {e}\n{traceback.format_exc()}")
+        log(f"Fatal error: {e}\n{traceback.format_exc()}")
         show_toast(f"Shade MediaHub Uploader Error: {e}", 6)
 
-    print(f"[{SCRIPT_NAME}] 🟢 Done.")
+    print(f"[{SCRIPT_NAME}] Done.")
 
 
 # ----------------------------------------------------------
@@ -245,10 +246,10 @@ def get_mediahub_files_custom_ui_actions():
     # MediaHub context menu — supports files *and* folders
     return [
         {
-            "name": "Shade",
+            "name": FOLDER_NAME,
             "actions": [
                 {
-                    "name": "Upload to Shade",
+                    "name": SCRIPT_NAME,
                     "isVisible": scope_mediahub,
                     "execute": start_mediahub_upload,
                     "minimumVersion": "2025",

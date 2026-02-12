@@ -10,7 +10,7 @@ This package provides several Python scripts that integrate Shade's review and c
 - **Conform Uploads**: Automated upload of conform sequences to Shade
 - **MediaHub Uploads**: Direct upload of files/folders from Flame's MediaHub
 - **Comment Synchronization**: Fetch comments from Shade and create Flame markers
-- **Automatic Versioning**: The API for this doesn't work yet as it's a new feature for them.
+- **Automatic Versioning**: Smart version increment based on existing Shade assets
 
 ## Requirements
 
@@ -49,11 +49,9 @@ This package provides several Python scripts that integrate Shade's review and c
 
 3. **First-time setup**: Launch Flame and use the config editor to set up your Shade API key and workspace.
 
-## User Configuration
-<img width="642" height="516" alt="user_settings" src="https://github.com/user-attachments/assets/359a3829-2ece-4547-8913-6db335c4f50d" />
+## Configuration
 
 ### Global Configuration
-<img width="648" height="517" alt="global_settings" src="https://github.com/user-attachments/assets/58c25bd8-e3f1-4fca-b388-02b9aebca1c7" />
 
 Global settings are stored at:
 ```
@@ -126,6 +124,16 @@ Uploads selected sequences to Shade with automatic versioning:
 - Creates shared library `FROM_FLAME` if it doesn't exist
 - Uses global H.264 preset for export
 - Supports auto-stacking (when enabled)
+
+### 2b. Shade Shot Uploader (`shade_shot_uploader.py`)
+
+**Location**: Media Panel → UC Shade → Upload Shot(s) to Shade
+
+Uploads clips (PyClip) as shots with auto-stack enabled:
+- Exports to `FROM_FLAME/YYYY-MM-DD/HHMM/`
+- Uploads to `/SHOTS/{filename}` on the project drive
+- Auto version-up locally before export (based on existing Shade versions)
+- Auto-stacks new uploads onto the previous version when found
 
 ### 3. Shade MediaHub Uploader (`shade_mediahub_uploader.py`)
 

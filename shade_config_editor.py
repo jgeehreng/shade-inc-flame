@@ -3,7 +3,7 @@
 """
 Shade Config Editor (Unified Global + User)
 Uppercut VFX Pipeline
-Accessible from Main Menu → Shade → Edit Config
+Accessible from Main Menu -> Shade -> Edit Config
 Now with:
 - Project Token (nickname | name)
 - Debug Mode (bool)
@@ -29,6 +29,10 @@ SHADE_API_BASE = "https://api.shade.inc"
 # valid values for project token
 PROJECT_TOKEN_NICKNAME = "nickname"
 PROJECT_TOKEN_NAME = "name"
+
+FOLDER_NAME = "UC Shade"
+SCRIPT_NAME = "Config Editor"
+VERSION = "v1.1.1"
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -380,10 +384,10 @@ def launch_editor(*args, **kwargs):
 def get_main_menu_custom_ui_actions():
     return [
         {
-            "hierarchy": ["Shade"],
+            "hierarchy": [FOLDER_NAME],
             "actions": [
                 {
-                    "name": "Edit Config",
+                    "name": SCRIPT_NAME,
                     "execute": launch_editor,
                     "minimumVersion": "2025",
                 }

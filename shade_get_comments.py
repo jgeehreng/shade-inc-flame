@@ -17,8 +17,9 @@ from lib.shade_api import (
     get_asset_comments,
 )
 
-SCRIPT_NAME = "Shade Get Comments"
-VERSION = "v1.1.1"
+FOLDER_NAME = "UC Shade"
+SCRIPT_NAME = "Get Comments"
+VERSION = "v1.1.2"
 
 
 # ----------------------------------------------------------
@@ -95,11 +96,18 @@ def pytime_to_frame(val):
 
 
 def get_clip_and_fps(selection):
-    """Return (clip_object, fps, asset_name) from a PySequence or PySegment."""
+    """Return (clip_object, fps, asset_name) from a PySequence, PyClip, or PySegment."""
     for item in selection:
         # Flame PySequence
         if isinstance(item, flame.PySequence):
             fps = _extract_fps(item.frame_rate)
+            raw_name = str(item.name)[1:-1]
+            asset_name = raw_name.strip()
+            return item, fps, asset_name
+
+        # Flame PyClip (treat like sequence-level, no segment offset)
+        if isinstance(item, flame.PyClip):
+            fps = _extract_fps(getattr(item, "frame_rate", 24.0))
             raw_name = str(item.name)[1:-1]
             asset_name = raw_name.strip()
             return item, fps, asset_name
@@ -178,33 +186,23 @@ def shade_get_comments(selection):
             total_markers_this_item = 0
             combined_texts = []  # Collect all comment texts for segment comment field
 
-            # --- Segment timing info ---
+            # --- Segment timing info (temporarily disabled) ---
             is_segment = isinstance(item, flame.PySegment)
-            seg_rec_in = seg_rec_out = None
-            if is_segment:
-                record_in = str(item.record_in).replace("+", ":")[1:-1]
-                record_out = str(item.record_out).replace("+", ":")[1:-1]
-                try:
-                    seg_rec_in = timecode_to_frames(record_in, fps)
-                    seg_rec_out = timecode_to_frames(record_out, fps)
-                except Exception:
-                    seg_rec_in = seg_rec_out = None
+            # seg_rec_in = seg_rec_out = None
+            # if is_segment:
+            #     record_in = str(item.record_in).replace("+", ":")[1:-1]
+            #     record_out = str(item.record_out).replace("+", ":")[1:-1]
+            #     try:
+            #         seg_rec_in = timecode_to_frames(record_in, fps)
+            #         seg_rec_out = timecode_to_frames(record_out, fps)
+            #     except Exception:
+            #         seg_rec_in = seg_rec_out = None
 
-            # --- Calculate offset dynamically ---
+            # --- Calculate offset dynamically (disabled: use 0) ---
             offset_frames = 0
-            if is_segment:
-                try:
-                    parent_sequence = item.parent.parent.parent
-                    seq_start_tc = getattr(parent_sequence.in_mark, "timecode", None)
-                    if not seq_start_tc:
-                        seq_start_tc = str(parent_sequence.start_time).replace("+", ":")
-                    offset_frames = timecode_to_frames(seq_start_tc, fps)
-                    log(f"Sequence start timecode: {seq_start_tc} -> offset {offset_frames} frames")
-                except Exception as e:
-                    offset_frames = int(round(3600 * fps))
-                    log(f"WARNING: Offset fallback (1h): {offset_frames} frames ({e})")
 
             # --- Add markers ---
+            base_offset = 0  # Shade starts at frame 0, Flame at frame 1...still trying to sort this out
             for c in comments:
                 tc_str = c.get("tc_start")
                 if tc_str:
@@ -213,17 +211,10 @@ def shade_get_comments(selection):
                     ts_sec = c.get("timestamp", 0.0)
                     frame_num = int(round(ts_sec * fps))
 
-                adjusted_frame = frame_num + offset_frames if is_segment else frame_num
-
-                # Skip markers outside segment range
-                if is_segment and seg_rec_in is not None and seg_rec_out is not None:
-                    if adjusted_frame < seg_rec_in or adjusted_frame > seg_rec_out:
-                        log(f"WARNING: Skipping comment outside segment range ({adjusted_frame} not in {seg_rec_in}-{seg_rec_out})")
-                        continue
+                adjusted_frame = frame_num + offset_frames + base_offset
 
                 try:
-                    # marker = clip.create_marker(int(adjusted_frame))
-                    marker = clip.create_marker(int(frame_num))
+                    marker = clip.create_marker(int(adjusted_frame))
                     author = c.get("author", "Unknown")
                     content = (c.get("content") or "").strip()
                     replies = c.get("replies", [])
@@ -300,18 +291,17 @@ def shade_get_comments(selection):
 def scope_segment(selection):
     return any(isinstance(s, flame.PySegment) for s in selection)
 
-
-def scope_sequence(selection):
-    return any(isinstance(s, flame.PySequence) for s in selection)
+def scope_clip_or_sequence(selection):
+    return all(isinstance(item, (flame.PyClip, flame.PySequence)) for item in selection)
 
 
 def get_timeline_custom_ui_actions():
     return [
         {
-            "name": "Shade",
+            "name": FOLDER_NAME,
             "actions": [
                 {
-                    "name": "Get Comments",
+                    "name": SCRIPT_NAME,
                     "execute": shade_get_comments,
                     "isVisible": scope_segment,
                     "minimumVersion": "2025",
@@ -324,12 +314,12 @@ def get_timeline_custom_ui_actions():
 def get_media_panel_custom_ui_actions():
     return [
         {
-            "name": "Shade",
+            "name": FOLDER_NAME,
             "actions": [
                 {
-                    "name": "Get Comments",
+                    "name": SCRIPT_NAME,
                     "execute": shade_get_comments,
-                    "isVisible": scope_sequence,
+                    "isVisible": scope_clip_or_sequence,
                     "minimumVersion": "2025",
                 }
             ],

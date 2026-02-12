@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Shade Conform Uploader v1.5.1 — Uppercut VFX Pipeline
+Shade Shot Uploader — Uppercut VFX Pipeline
 - export selection into FROM_FLAME/date/time
-- write files to /Volumes/.../FROM_FLAME/date  (no double time)
-- upload to Shade
+- upload shots to Shade
 - auto-version-up in Flame before export
-- call auto_stack only here (not in MediaHub)
+- auto-stack enabled
 """
 
 import flame
@@ -18,8 +17,8 @@ from PySide6 import QtWidgets, QtCore
 import lib.shade_api as shade_api
 
 FOLDER_NAME = "UC Shade"
-SCRIPT_NAME = "Conform Uploader"
-VERSION = "v1.5.2"
+SCRIPT_NAME = "Shot Uploader"
+VERSION = "v1.0.0"
 
 
 # ----------------------------------------------------------
@@ -59,10 +58,10 @@ def attr(x):
 # ----------------------------------------------------------
 # Progress UI
 # ----------------------------------------------------------
-class ShadeConformProgress(QtWidgets.QDialog):
+class ShadeShotProgress(QtWidgets.QDialog):
     def __init__(self, total_files):
         super().__init__()
-        self.setWindowTitle("Shade Conform Upload Progress")
+        self.setWindowTitle("Shade Shot Upload Progress")
         self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
         self.layout = QtWidgets.QVBoxLayout(self)
 
@@ -125,26 +124,20 @@ def ensure_folder(parent, name):
 # ----------------------------------------------------------
 def auto_version_up_flame(selection, cfg, project_token):
     """
-    For each item in selection:
-
-    - Take the full clip name from Flame (e.g. 'vlv_adam_v01')
-    - Search Shade using that full name as the query
-    - Strip extensions from Shade results ('.mp4', '.mov', etc.)
-    - If an extension-less Shade result exactly matches the clip name,
-      then version-up by +1 (v01 -> v02) and rename the item in Flame.
-    - If no exact match, leave the name as-is.
+    For each clip in selection:
+    - use full clip name (e.g., 'shot_v01')
+    - search Shade for exact name (extension stripped)
+    - if found, bump to next version locally before export
     """
     try:
         api_key = cfg.get("shade_api_key") or cfg.get("api_key")
         drive_id = shade_api.get_or_create_drive(cfg, project_token)
 
         for item in selection:
-            # Flame name is typically '<name>', so strip brackets
             raw_name = str(item.name)[1:-1]
             clip_name = raw_name.strip()
             log(f"[auto_version_up_flame] Checking '{clip_name}'")
 
-            # Require a trailing version at end of name, e.g. v01 or V02
             m = re.search(r"([vV])(\d+)$", clip_name)
             if not m:
                 log(f"[auto_version_up_flame] Name '{clip_name}' does not end with a version tag like 'v01'. Skipping.")
@@ -153,26 +146,32 @@ def auto_version_up_flame(selection, cfg, project_token):
             prefix = m.group(1)
             current_version = int(m.group(2))
             base_no_version = clip_name[:m.start()]
-            search_key = clip_name
 
             try:
-                results = shade_api.search_shade_assets(api_key, drive_id, search_key, limit=25)
+                results = shade_api.search_shade_assets(api_key, drive_id, base_no_version, limit=50)
             except Exception as e:
                 log(f"[auto_version_up_flame] Shade search failed for '{clip_name}': {e}")
                 continue
 
-            cleaned_results = []
+            max_found = current_version
+            pattern = re.compile(rf"^{re.escape(base_no_version)}[vV](\d+)$")
             for r in results:
                 shade_name = r.get("name", "")
                 no_ext = os.path.splitext(shade_name)[0]
-                cleaned_results.append(no_ext)
+                mver = pattern.match(no_ext)
+                if mver:
+                    try:
+                        ver_num = int(mver.group(1))
+                        if ver_num > max_found:
+                            max_found = ver_num
+                    except Exception:
+                        pass
 
-            # Option A: only version-up if exact name already exists in Shade
-            if search_key not in cleaned_results:
-                log(f"No existing version found in Shade for '{clip_name}'. Keeping name.")
+            if max_found == current_version:
+                log(f"No higher version found in Shade for '{base_no_version}'. Keeping name.")
                 continue
 
-            next_version = current_version + 1
+            next_version = max_found + 1
             new_name = f"{base_no_version}{prefix}{next_version:02d}"
 
             try:
@@ -247,7 +246,6 @@ def start_upload(selection):
         cfg = shade_api.validate_config()
         project = flame.projects.current_project
 
-        # Determine which project token to use
         token_mode = cfg.get("project_token", "nickname")
         project_token = (
             attr(project.nickname)
@@ -260,7 +258,7 @@ def start_upload(selection):
         reply = QtWidgets.QMessageBox.question(
             None,
             "Confirm Upload",
-            f"Upload conform for project '{project_token}' to Shade?",
+            f"Upload shots for project '{project_token}' to Shade?",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
         )
         if reply != QtWidgets.QMessageBox.Yes:
@@ -277,12 +275,9 @@ def start_upload(selection):
         if not files:
             raise RuntimeError("No files exported for upload.")
 
-        progress = ShadeConformProgress(len(files))
+        progress = ShadeShotProgress(len(files))
         progress.show()
 
-        # ------------------------------------------------------------------
-        # Validate drive before uploading
-        # ------------------------------------------------------------------
         drive_id = shade_api.get_or_create_drive(cfg, project_token)
         if not drive_id:
             msg = f"Could not find or create Shade drive for '{project_token}'. Upload aborted."
@@ -293,22 +288,26 @@ def start_upload(selection):
         for idx, local_path in enumerate(files, 1):
             progress.update_total_file(idx, len(files), local_path)
             try:
+                filename = os.path.basename(local_path)
+                dest_path = f"/TEST/{filename}"
+
                 shade_api.upload_to_shade(
                     local_path,
                     project_token,
                     progress_callback=progress.update_file_percent,
                     auto_stack=True,
+                    dest_path=dest_path,
                 )
             except Exception as e:
                 log(f"Failed to upload {local_path}: {e}")
                 show_toast(f"Upload failed for {os.path.basename(local_path)}", 5)
 
         progress.finish()
-        show_toast("Shade Conform upload complete.", 5)
+        show_toast("Shade Shot upload complete.", 5)
         log("All uploads complete.")
     except Exception as e:
         log(f"Fatal error: {e}\n{traceback.format_exc()}")
-        show_toast(f"Shade Conform Uploader Error: {e}", 5)
+        show_toast(f"Shade Shot Uploader Error: {e}", 5)
 
     print(f"[{SCRIPT_NAME}] Done.")
 
@@ -316,19 +315,18 @@ def start_upload(selection):
 # ----------------------------------------------------------
 # Menu
 # ----------------------------------------------------------
-def scope_sequence(selection):
-    return all(isinstance(item, flame.PySequence) for item in selection)
+def scope_clip(selection):
+    return all(isinstance(item, flame.PyClip) for item in selection)
 
 
 def get_media_panel_custom_ui_actions():
     return [
         {
             "name": FOLDER_NAME,
-            'order': 6,
             "actions": [
                 {
-                    "name": "Conform Uploader",
-                    "isVisible": scope_sequence,
+                    "name": SCRIPT_NAME,
+                    "isVisible": scope_clip,
                     "execute": start_upload,
                     "minimumVersion": "2025",
                 }

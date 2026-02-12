@@ -9,6 +9,8 @@ import os
 import json
 import requests
 import base64
+import re
+import time
 
 # ---------------------------------------------------------------------
 # Config locations
@@ -52,7 +54,7 @@ def _load_json(path):
             with open(path, "r") as f:
                 return json.load(f)
     except Exception as e:
-        print(f"[shade_api] ⚠️ Failed to load {path}: {e}")
+        print(f"[shade_api] Failed to load {path}: {e}")
     return {}
 
 def validate_config():
@@ -119,11 +121,11 @@ def get_or_create_drive(cfg, drive_name):
         name = d.get("name", "").strip().lower()
         ident = d.get("identifier", "").strip().lower()
         if drive_name.lower() in (name, ident):
-            log(f"[get_or_create_drive] ✅ Found drive: {d['id']}")
+            log(f"[get_or_create_drive] Found drive: {d['id']}")
             return d["id"]
 
-    # 2️⃣ Drive not found → create it
-    log(f"[get_or_create_drive] ❌ Drive '{drive_name}' not found. Creating new one...")
+    # 2️⃣ Drive not found -> create it
+    log(f"[get_or_create_drive] Drive '{drive_name}' not found. Creating new one...")
 
     payload = {
         "name": drive_name,
@@ -143,7 +145,7 @@ def get_or_create_drive(cfg, drive_name):
         if rc.status_code not in (200, 201):
             raise RuntimeError(f"Drive creation failed: {rc.status_code} {rc.text}")
         new_drive = rc.json()
-        log(f"[get_or_create_drive] ✅ Created new drive: {new_drive.get('id')}")
+        log(f"[get_or_create_drive] Created new drive: {new_drive.get('id')}")
         return new_drive.get("id")
     except Exception as e:
         raise RuntimeError(f"Failed to create drive '{drive_name}': {e}")
@@ -160,18 +162,18 @@ def search_shade_assets(api_key: str, drive_id: str, query: str, limit: int = 20
     payload = {"query": query, "drive_id": drive_id, "limit": limit}
     headers = {"Authorization": api_key, "Content-Type": "application/json"}
 
-    log(f"[search_shade_assets] 🔍 Searching Shade for '{query}' in drive {drive_id}")
+    log(f"[search_shade_assets] Searching Shade for '{query}' in drive {drive_id}")
     r = requests.post(f"{base_url}/search", headers=headers, data=json.dumps(payload), timeout=15)
-    log(f"[search_shade_assets] → {r.status_code}")
+    log(f"[search_shade_assets] -> {r.status_code}")
 
     if r.status_code != 200:
-        log(f"[search_shade_assets] ⚠️ Shade search failed: {r.text[:200]}")
+        log(f"[search_shade_assets] Shade search failed: {r.text[:200]}")
         return []
 
     try:
         data = r.json()
     except Exception:
-        log(f"[search_shade_assets] ⚠️ Non-JSON response:\n{r.text[:300]}")
+        log(f"[search_shade_assets] Non-JSON response:\n{r.text[:300]}")
         return []
 
     if isinstance(data, list):
@@ -207,7 +209,7 @@ def fetch_shadefs_token(api_key: str, drive_id: str) -> str:
     if not token or not token.startswith("ey"):
         raise RuntimeError(f"Invalid token response: {r.text[:200]}")
 
-    log("[fetch_shadefs_token] ✅ ShadeFS token OK")
+    log("[fetch_shadefs_token] ShadeFS token OK")
     return token
 
 # ---------------------------------------------------------------------
@@ -223,7 +225,7 @@ def _b64url_json(token: str) -> dict:
         decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
         return json.loads(decoded)
     except Exception as e:
-        log(f"[b64url_json] ⚠️ Failed to decode token: {e}")
+        log(f"[b64url_json] Failed to decode token: {e}")
         return {}
 
 # ---------------------------------------------------------------------
@@ -233,7 +235,7 @@ def _b64url_json(token: str) -> dict:
 def ensure_dir(token: str, drive_id: str, dest_path: str, email: str):
     """Ensure remote directory exists before upload."""
     directory = os.path.dirname(dest_path)
-    log(f"[ensure_dir] 📁 Ensuring directory exists: {directory}")
+    log(f"[ensure_dir] Ensuring directory exists: {directory}")
     r = requests.post(
         f"{FS_BASE}/{drive_id}/fs/mkdir",
         headers={"Authorization": f"Bearer {token}"},
@@ -242,12 +244,12 @@ def ensure_dir(token: str, drive_id: str, dest_path: str, email: str):
     )
     if r.status_code not in (200, 201):
         raise RuntimeError(f"mkdir failed: {r.status_code} {r.text}")
-    log("[ensure_dir] ✅ Directory ready")
+    log("[ensure_dir] Directory ready")
 
 
 def initiate_multipart(token: str, drive_id: str, dest_path: str, part_size: int = 8 * 1024 * 1024):
     """Initiate a multipart upload session."""
-    log("[initiate_multipart] 🚦 Initiating multipart upload…")
+    log("[initiate_multipart] Initiating multipart upload.")
     mime = "video/mp4" if dest_path.lower().endswith(".mp4") else "application/octet-stream"
     r = requests.post(
         f"{FS_BASE}/{drive_id}/upload/multipart",
@@ -261,13 +263,13 @@ def initiate_multipart(token: str, drive_id: str, dest_path: str, part_size: int
     )
     r.raise_for_status()
     data = r.json()
-    log(f"[initiate_multipart] ✅ Upload initiated: partSize={data['partSize']}")
+    log(f"[initiate_multipart] Upload initiated: partSize={data['partSize']}")
     return data["partSize"], data["token"]
 
 
 def presign_part(drive_id: str, finish_token: str, auth_token: str, part_number: int):
     """Request presigned upload URL for one part."""
-    log(f"[presign_part] 🔑 Requesting presigned URL for part {part_number}…")
+    log(f"[presign_part] Requesting presigned URL for part {part_number}.")
     r = requests.post(
         f"{FS_BASE}/{drive_id}/upload/multipart/part/{part_number}",
         headers={"Authorization": f"Bearer {auth_token}"},
@@ -300,7 +302,7 @@ def upload_part(url: str, headers: dict, file_path: str, start: int, end: int):
 
 def complete_multipart(drive_id: str, finish_token: str, auth_token: str, parts):
     """Finalize multipart upload on the ShadeFS server."""
-    log("[complete_multipart] 🔄 Finalizing upload on server…")
+    log("[complete_multipart] Finalizing upload on server.")
     r = requests.post(
         f"{FS_BASE}/{drive_id}/upload/multipart/complete",
         headers={"Authorization": f"Bearer {auth_token}"},
@@ -308,7 +310,7 @@ def complete_multipart(drive_id: str, finish_token: str, auth_token: str, parts)
         json={"parts": parts},
     )
     r.raise_for_status()
-    log("[complete_multipart] 🎉 Upload Fully Complete!")
+    log("[complete_multipart] Upload fully complete.")
 
 # ---------------------------------------------------------------------
 # Upload (ShadeFS multipart)
@@ -326,7 +328,7 @@ def upload_to_shade(local_path: str, project_token: str, progress_callback=None,
         auto_stack: Whether to automatically stack versions (currently not implemented)
         dest_path: Optional destination path on Shade. If not provided, defaults to /CONFORMS/{filename}
     """
-    log(f"[upload_to_shade] 🔄 Starting upload for project '{project_token}'")
+    log(f"[upload_to_shade] Starting upload for project '{project_token}'")
 
     cfg = validate_config()
     api_key = cfg.get("shade_api_key") or cfg.get("api_key")
@@ -354,7 +356,7 @@ def upload_to_shade(local_path: str, project_token: str, progress_callback=None,
     total_parts = (file_size + part_size - 1) // part_size
     completed = []
 
-    log(f"[upload_to_shade] Uploading {os.path.basename(local_path)} in {total_parts} parts…")
+    log(f"[upload_to_shade] Uploading {os.path.basename(local_path)} in {total_parts} parts.")
     bytes_uploaded = 0
 
     # --------------------------------------------------------
@@ -373,13 +375,27 @@ def upload_to_shade(local_path: str, project_token: str, progress_callback=None,
         if progress_callback:
             progress_callback(percent, f"{os.path.basename(local_path)} ({percent}%)")
 
-        log(f"[upload_to_shade] ✅ Finished part {part_number}/{total_parts} ({end - start} bytes)")
+        log(f"[upload_to_shade] Finished part {part_number}/{total_parts} ({end - start} bytes)")
 
     # --------------------------------------------------------
     # Step 5: Complete multipart upload
     # --------------------------------------------------------
     complete_multipart(drive_id, finish_token, token, completed)
-    log(f"[upload_to_shade] ✅ Upload complete for {os.path.basename(local_path)}")
+    log(f"[upload_to_shade] Upload complete for {os.path.basename(local_path)}")
+
+    # --------------------------------------------------------
+    # Optional: auto stack new asset onto previous version
+    # --------------------------------------------------------
+    if auto_stack:
+        try:
+            _maybe_auto_stack_asset(
+                api_key=api_key,
+                drive_id=drive_id,
+                dest_path=dest_path,
+                filename=os.path.basename(local_path),
+            )
+        except Exception as stack_err:
+            log(f"[upload_to_shade] Auto-stack skipped: {stack_err}")
 
 
 # -----------------------------------------------
@@ -396,7 +412,7 @@ def seconds_to_tc(seconds, fps=24):
 
 
 def _seconds_to_tc(seconds: float, fps: float) -> str:
-    """Convert seconds → HH:MM:SS:FF for marker placement."""
+    """Convert seconds -> HH:MM:SS:FF for marker placement."""
     if seconds is None:
         return "00:00:00:00"
     total_frames = int(round(seconds * fps))
@@ -421,7 +437,7 @@ def get_asset_comments(api_key, drive_id, asset_id, fps=None):
     BASE_URL = "https://api.shade.inc"
     asset_id_str = asset_id.get("id") if isinstance(asset_id, dict) else str(asset_id)
     url = f"{BASE_URL}/assets/{asset_id_str}/comments?drive_id={drive_id}"
-    print(f"[shade_api] → Fetching comments for asset {asset_id_str} …")
+    print(f"[shade_api] -> Fetching comments for asset {asset_id_str} .")
 
     headers = {"Authorization": api_key, "Accept": "application/json"}
     r = requests.get(url, headers=headers, timeout=20)
@@ -431,10 +447,10 @@ def get_asset_comments(api_key, drive_id, asset_id, fps=None):
 
     comments = r.json()
     if not comments:
-        print("[shade_api] 🕳️ No comments found.")
+        print("[shade_api] No comments found.")
         return []
 
-    # Inner helper to convert seconds → timecode
+    # Inner helper to convert seconds -> timecode
     def secs_to_tc(sec, fps):
         if not fps or sec is None:
             return None
@@ -475,5 +491,156 @@ def get_asset_comments(api_key, drive_id, asset_id, fps=None):
         }
 
     normalized = [normalize(c) for c in comments]
-    print(f"[shade_api] ✅ Retrieved {len(normalized)} comment(s)")
+    print(f"[shade_api] Retrieved {len(normalized)} comment(s)")
     return normalized
+
+
+# -----------------------------------------------
+# Version stacking helpers
+# -----------------------------------------------
+
+def _prev_version_name(filename_no_ext: str) -> str or None:
+    """
+    Given a filename without extension that ends with vNN, return the previous version name.
+    Example: 'shot_v03' -> 'shot_v02'
+    """
+    m = re.search(r"^(?P<base>.+?)(?P<prefix>[vV])(?P<num>\d+)$", filename_no_ext)
+    if not m:
+        return None
+    num = int(m.group("num"))
+    if num <= 0:
+        return None
+    return f"{m.group('base')}{m.group('prefix')}{num - 1:02d}"
+
+
+def _find_asset_by_name(api_key: str, drive_id: str, name: str):
+    """
+    Search for an asset by its name (case-insensitive), returning the first match.
+    """
+    results = search_shade_assets(api_key, drive_id, name, limit=10)
+    for r in results:
+        shade_name = r.get("name", "")
+        if shade_name.lower() == name.lower():
+            return r
+        no_ext = os.path.splitext(shade_name)[0]
+        if no_ext.lower() == name.lower():
+            return r
+    return None
+
+
+def _get_asset_by_path(api_key: str, drive_id: str, path: str):
+    """
+    GET /assets/path?path={path}&drive_id={drive_id}
+    """
+    url = f"{API_BASE}/assets/path"
+    headers = {"Authorization": api_key, "Accept": "application/json"}
+
+    def try_path(p):
+        params = {"path": p, "drive_id": drive_id}
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        return resp
+
+    # Try as-is
+    r = try_path(path)
+    if r.status_code == 200:
+        return r.json()
+
+    # Try with drive prefix if missing
+    if not str(path).startswith(f"/{drive_id}"):
+        prefixed = f"/{drive_id}{path}"
+        r2 = try_path(prefixed)
+        if r2.status_code == 200:
+            return r2.json()
+        r = r2
+
+    raise RuntimeError(f"get_asset_by_path failed: {r.status_code} {r.text}")
+
+
+def _stack_asset(api_key: str, drive_id: str, asset_id: str, target_asset_id: str):
+    """
+    POST /assets/{asset_id}/stack?target_asset_id=...&drive_id=...
+    """
+    url = f"{API_BASE}/assets/{asset_id}/stack"
+    headers = {"Authorization": api_key, "Content-Type": "application/json"}
+    params = {"target_asset_id": target_asset_id, "drive_id": drive_id}
+    r = requests.post(url, headers=headers, params=params, json={})
+    if r.status_code in (200, 201):
+        return r.json() if r.text else None
+
+    # If target is not part of a stack yet, create one containing both assets
+    if r.status_code == 404 and "Target asset is not part of a stack" in r.text:
+        return _create_stack(api_key, drive_id, [target_asset_id, asset_id])
+
+    raise RuntimeError(f"Stack request failed: {r.status_code} {r.text}")
+
+
+def _create_stack(api_key: str, drive_id: str, asset_ids):
+    """
+    POST /assets/stack — create a new stack with the provided asset ids
+    """
+    url = f"{API_BASE}/assets/stack"
+    headers = {"Authorization": api_key, "Content-Type": "application/json"}
+    payload = {"asset_ids": asset_ids, "drive_id": drive_id}
+    r = requests.post(url, headers=headers, json=payload)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Create stack failed: {r.status_code} {r.text}")
+    return r.json() if r.text else None
+
+
+def _maybe_auto_stack_asset(api_key: str, drive_id: str, dest_path: str, filename: str):
+    """
+    Attempt to stack the newly uploaded asset onto the previous version (vNN-1) if it exists.
+    """
+    base_no_ext = os.path.splitext(filename)[0]
+    m_base = re.match(r"(.+?)[vV]\d+$", base_no_ext)
+    base_root = m_base.group(1) if m_base else base_no_ext
+    prev_name = _prev_version_name(base_no_ext)
+    if not prev_name:
+        log("[auto_stack] No version pattern found; skipping stacking.")
+        return
+
+    # Find previous asset to target
+    prev_asset = _find_asset_by_name(api_key, drive_id, prev_name)
+    if not prev_asset:
+        log(f"[auto_stack] No previous asset found for '{prev_name}'; skipping.")
+        return
+    target_asset_id = prev_asset.get("id")
+    if not target_asset_id:
+        log("[auto_stack] Previous asset missing id; skipping.")
+        return
+
+    # Find newly uploaded asset (prefer direct path lookup, then fallback search with retries)
+    new_asset = None
+    errors = []
+
+    for attempt in range(10):
+        try:
+            if dest_path:
+                try:
+                    new_asset = _get_asset_by_path(api_key, drive_id, dest_path)
+                except Exception as e:
+                    errors.append(f"path lookup attempt {attempt+1}: {e}")
+            if not new_asset:
+                new_asset = _find_asset_by_name(api_key, drive_id, base_no_ext)
+            if not new_asset:
+                new_asset = _find_asset_by_name(api_key, drive_id, filename)
+            if not new_asset:
+                if base_root and base_root != base_no_ext:
+                    new_asset = _find_asset_by_name(api_key, drive_id, base_root)
+        except Exception as e:
+            errors.append(str(e))
+
+        if new_asset:
+            break
+        time.sleep(1)  # give the indexer a moment
+
+    if not new_asset:
+        raise RuntimeError(f"Uploaded asset not found via search/path; cannot stack. Details: {errors}")
+
+    new_asset_id = new_asset.get("id")
+    if not new_asset_id:
+        raise RuntimeError("Uploaded asset missing id; cannot stack.")
+
+    log(f"[auto_stack] Stacking asset {new_asset_id} onto {target_asset_id}")
+    _stack_asset(api_key, drive_id, new_asset_id, target_asset_id)
+    log("[auto_stack] Stacked successfully.")
