@@ -733,6 +733,7 @@ def _maybe_auto_stack_asset(api_key: str, drive_id: str, dest_path: str, filenam
 
 APPROVAL_STATUS_NAME = "Approval Status"
 PUBLISH_BASE = "https://app.shade.inc/publish"
+COLLECTION_BASE = "https://app.shade.inc/collection"
 # Commenting preset: view, download, and comment, including stack versions.
 REVIEW_SHARE_ACTIONS = [
     "read",
@@ -915,9 +916,13 @@ def create_public_share(
     password: str = None,
     allowed_actions=None,
 ):
-    """Create a published link for one file or folder and attach its public URL."""
+    """Create a published link for one file or folder and attach its public URL.
+
+    The publish page lists children with the path stored on the share. Shade indexes
+    assets under /{drive_id}/..., so the share must use that prefixed path.
+    """
     body = {
-        "path": logical_path(drive_id, path),
+        "path": drive_path(drive_id, path),
         "is_public_enabled": True,
         "allowed_actions": list(allowed_actions or REVIEW_SHARE_ACTIONS),
         "name": name,
@@ -939,3 +944,76 @@ def create_public_share(
         share["url"] = f"{PUBLISH_BASE}/{share_id}"
     log(f"[create_public_share] {share.get('name')}: {share.get('url')}")
     return share
+
+
+def create_collection(api_key: str, drive_id: str, name: str, description: str = ""):
+    """Create a collection and return its id. Shade returns the id as a JSON string."""
+    r = requests.post(
+        f"{API_BASE}/collections",
+        headers=_auth_headers(api_key),
+        json={"name": name, "description": description or "", "drive_id": drive_id},
+        timeout=30,
+    )
+    if not r.ok:
+        raise _http_error(r, "create_collection")
+    data = r.json()
+    collection_id = data if isinstance(data, str) else (data.get("id") if isinstance(data, dict) else None)
+    if not collection_id:
+        raise RuntimeError(f"create_collection returned no id: {data}")
+    log(f"[create_collection] {name}: {collection_id}")
+    return collection_id
+
+
+def delete_collection(api_key: str, drive_id: str, collection_id: str):
+    r = requests.delete(
+        f"{API_BASE}/collections/{collection_id}",
+        headers=_auth_headers(api_key),
+        params={"drive_id": drive_id},
+        timeout=30,
+    )
+    if not r.ok:
+        raise _http_error(r, "delete_collection")
+    log(f"[delete_collection] {collection_id}")
+    return True
+
+
+def add_assets_to_collection(api_key: str, drive_id: str, collection_id: str, asset_ids):
+    ids = [asset_id for asset_id in asset_ids if asset_id]
+    if not ids:
+        raise RuntimeError("No assets to add to the collection.")
+    r = requests.post(
+        f"{API_BASE}/collections/{collection_id}/assets",
+        headers=_auth_headers(api_key),
+        json={"drive_id": drive_id, "asset_ids": ids},
+        timeout=30,
+    )
+    if not r.ok:
+        raise _http_error(r, "add_assets_to_collection")
+    log(f"[add_assets_to_collection] {len(ids)} asset(s) -> {collection_id}")
+    return r.json()
+
+
+def publish_collection(api_key: str, drive_id: str, collection_id: str, password: str = None, allowed_actions=None):
+    """Turn on the collection's public link and attach https://app.shade.inc/collection/{invite_id}."""
+    body = {
+        "drive_id": drive_id,
+        "is_public_enabled": True,
+        "allowed_actions": list(allowed_actions or REVIEW_SHARE_ACTIONS),
+    }
+    if password:
+        body["password"] = password
+    r = requests.put(
+        f"{API_BASE}/collections/{collection_id}",
+        headers=_auth_headers(api_key),
+        json=body,
+        timeout=30,
+    )
+    if not r.ok:
+        raise _http_error(r, "publish_collection")
+    collection = r.json()
+    invite_id = collection.get("invite_id")
+    if not invite_id:
+        raise RuntimeError("Shade did not return a collection invite id.")
+    collection["url"] = f"{COLLECTION_BASE}/{invite_id}"
+    log(f"[publish_collection] {collection.get('name')}: {collection.get('url')}")
+    return collection
