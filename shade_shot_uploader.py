@@ -297,6 +297,7 @@ def get_media_panel_custom_ui_actions():
             "actions": [
                 {
                     "name": SCRIPT_NAME,
+                    "order": 3,
                     "isVisible": scope_clip,
                     "execute": start_upload,
                     "minimumVersion": "2025",

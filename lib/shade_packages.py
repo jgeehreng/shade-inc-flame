@@ -5,7 +5,6 @@ Flame Launch hook: installs required Python packages for Shade integration.
 Prompts for administrator password via GUI dialog (falls back to terminal if GUI unavailable).
 Targets Flame's versioned site-packages.
 Installs if missing:
-  - PyJWT (import name: jwt)
   - requests (import name: requests)
 """
 
@@ -26,7 +25,6 @@ except ImportError:
 
 # Static requirements: (import_name, pip_distribution)
 REQUIRED_PACKAGES: List[Tuple[str, str]] = [
-    ("jwt", "PyJWT"),
     ("requests", "requests"),
 ]
 

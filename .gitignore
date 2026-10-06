@@ -1,1 +1,7 @@
 .DS_Store
+
+# Shade credentials live in these files on the Flame host. Never commit them.
+config/
+**/user_config.json
+**/shared_config.json
+**/.env

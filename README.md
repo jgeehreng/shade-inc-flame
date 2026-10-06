@@ -19,7 +19,6 @@ This package provides several Python scripts that integrate Shade's review and c
 - **Shade API Key** (get one at [Shade Academy](https://academy.shade.inc/developers#authenticating-with-the-python-sdk))
 - **Required Python packages** (automatically installed via `shade_packages.py` when missing):
   - `requests`
-  - `PyJWT`
 
 ## Installation
 
@@ -186,6 +185,54 @@ Fetches comments from Shade and creates Flame markers:
 - Duration support (if comment has duration)
 - Caching to avoid duplicate API calls
 
+### 5. Shade Get Status (`shade_get_status.py`)
+
+**Location**: Media Panel → UC Shade → Get Status
+
+Reads the drive's **Approval Status** metadata and paints the Flame selection:
+
+| Shade | Flame color |
+| --- | --- |
+| Approved | Approved |
+| In Review | Needs Review |
+| Rejected | Rejected |
+
+Unset or unknown values are left unchanged and printed to the console.
+
+### 6. Shade Set Status (`shade_set_status.py`)
+
+**Location**: Media Panel → UC Shade → Set Status
+
+Writes the Flame color label onto **Approval Status**:
+
+| Flame color | Shade |
+| --- | --- |
+| Approved | Approved |
+| Needs Review | In Review |
+
+**In Progress** has no option on this field, so those clips are skipped with a console message.
+
+### 7. Shade EDL Markers (`shade_edl_to_markers.py`)
+
+**Location**:
+- Media Panel → UC Shade → EDL Markers
+- Timeline → UC Shade → EDL Markers (segments)
+
+Imports a marker EDL exported from Shade. Record timecode is `HH:MM:SS:FF`. A start of `01:00:00:00` is the head of the clip, so `01:00:01:13` becomes frame 37. Marker length comes from the EDL duration, in frames. The commenter is read from the `|M:` note.
+
+### 8. Shade Create Share Link (`shade_create_share.py`)
+
+**Location**: Media Panel → UC Shade → Create Share Link
+
+Creates one published link for the selection. Shade links cover a single file or folder, so the script gathers the selection into a new `/SHARES/YYYY-MM-DD/` folder and shares that folder.
+
+- Clips or sequences already in Shade are copied server-side.
+- Anything missing is exported as H.264 and uploaded into the same folder.
+- A dialog collects the link name and an optional password.
+- The URL (`https://app.shade.inc/publish/{id}`) is copied to the clipboard.
+
+The link allows view, download, and comment.
+
 ## API Library (`lib/shade_api.py`)
 
 Core library providing shared functionality:
@@ -197,6 +244,8 @@ Core library providing shared functionality:
 - **`upload_to_shade(local_path, project_token, ...)`**: Uploads files using ShadeFS multipart upload
 - **`search_shade_assets(api_key, drive_id, query, ...)`**: Searches for assets in Shade
 - **`get_asset_comments(api_key, drive_id, asset_id, ...)`**: Fetches comments for an asset
+- **`get_approval_status` / `set_approval_status`**: Read and write the Approval Status metadata field
+- **`create_public_share`**: Create a published link for one file or folder
 
 ### Configuration Merging
 
@@ -208,7 +257,7 @@ The library merges configuration in this order (later values override earlier):
 
 ## Package Management (`lib/shade_packages.py`)
 
-Automatically installs `requests` and `PyJWT` when they are missing. Handles:
+Automatically installs `requests` when it is missing. Handles:
 - Detection of missing packages
 - Installation into Flame's versioned site-packages, including Python 3.13 on Flame 2027
 - Sudo password prompt for system-wide installation
@@ -277,6 +326,10 @@ shade/
 ├── shade_conform_uploader.py # Sequence upload tool (v1.5.2)
 ├── shade_shot_uploader.py    # Shot upload tool (v1.0.0)
 ├── shade_get_comments.py     # Comment synchronization (v1.1.2)
+├── shade_edl_to_markers.py   # Shade marker EDL to Flame markers (v1.0)
+├── shade_get_status.py       # Paint Flame labels from Approval Status (v1.0)
+├── shade_set_status.py       # Write Flame labels to Approval Status (v1.0)
+├── shade_create_share.py     # Published link for a selection (v1.0)
 ├── shade_mediahub_uploader.py # MediaHub upload tool (v1.3.1)
 ├── shade_version_up_tester.py # Version-up test action
 ├── test_shade_drive_creation.py
@@ -285,6 +338,8 @@ shade/
 
 ## Version History
 
+- **v1.0** - EDL Markers: import a Shade marker EDL at frame accuracy
+- **v1.0** - Get Status, Set Status, and Create Share Link (Approval Status metadata and a `/SHARES` folder link)
 - **v1.5.2** - Conform Uploader: version-up uses the highest Shade version, shared H.264 preset
 - **v1.3.1** - MediaHub Uploader: folder support, path preservation, project token from config
 - **v1.1.2** - Get Comments: segment support, caching, duration handling, project token from config
