@@ -233,6 +233,19 @@ Creates one published link for the selection. Shade links cover a single file or
 
 The link allows view, download, and comment.
 
+### 9. Shade Create Collection Link (`shade_create_collection.py`)
+
+**Location**: Media Panel → UC Shade → Create Collection Link
+
+Creates one collection for the selection and turns on its published link. Collections group assets without copying them into a new folder.
+
+- Clips or sequences already in Shade are added directly.
+- Anything missing is exported as H.264, uploaded to `/CONFORMS`, then added.
+- A dialog collects the collection name and an optional password.
+- The URL (`https://app.shade.inc/collection/{invite_id}`) is copied to the clipboard.
+
+The link allows view, download, and comment.
+
 ## API Library (`lib/shade_api.py`)
 
 Core library providing shared functionality:
@@ -246,6 +259,7 @@ Core library providing shared functionality:
 - **`get_asset_comments(api_key, drive_id, asset_id, ...)`**: Fetches comments for an asset
 - **`get_approval_status` / `set_approval_status`**: Read and write the Approval Status metadata field
 - **`create_public_share`**: Create a published link for one file or folder
+- **`create_collection` / `publish_collection`**: Create a collection, add assets, and turn on its public link
 
 ### Configuration Merging
 
@@ -329,7 +343,8 @@ shade/
 ├── shade_edl_to_markers.py   # Shade marker EDL to Flame markers (v1.0)
 ├── shade_get_status.py       # Paint Flame labels from Approval Status (v1.0)
 ├── shade_set_status.py       # Write Flame labels to Approval Status (v1.0)
-├── shade_create_share.py     # Published link for a selection (v1.0)
+├── shade_create_share.py     # Published folder link for a selection (v1.0)
+├── shade_create_collection.py # Published collection link for a selection (v1.0)
 ├── shade_mediahub_uploader.py # MediaHub upload tool (v1.3.1)
 ├── shade_version_up_tester.py # Version-up test action
 ├── test_shade_drive_creation.py
@@ -338,6 +353,7 @@ shade/
 
 ## Version History
 
+- **v1.0** - Create Collection Link: publish a Shade collection for the selection
 - **v1.0** - EDL Markers: import a Shade marker EDL at frame accuracy
 - **v1.0** - Get Status, Set Status, and Create Share Link (Approval Status metadata and a `/SHARES` folder link)
 - **v1.5.2** - Conform Uploader: version-up uses the highest Shade version, shared H.264 preset

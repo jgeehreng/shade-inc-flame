@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Shade Create Share Link v1.0 — Uppercut VFX Pipeline
+Shade Create Collection Link v1.0 — Uppercut VFX Pipeline
 
-Builds one published link for the selection.
-Items already in Shade are copied into a new /SHARES folder.
-Items that are missing are exported (H.264) and uploaded there.
-Shade published links cover one path, so the link is the folder.
+Builds one published collection for the selection.
+Assets already in Shade are added directly.
+Assets that are missing are exported (H.264), uploaded to /CONFORMS, then added.
+The public URL is https://app.shade.inc/collection/{invite_id}.
 """
 
 import datetime
 import os
-import re
 import secrets
 import shutil
 import tempfile
+import time
 import traceback
 import flame
 from PySide6 import QtWidgets, QtCore
@@ -23,16 +23,16 @@ from lib.shade_api import (
     get_or_create_drive,
     get_project_token,
     find_asset_for_clip,
-    copy_shade_file,
-    create_public_share,
+    _get_asset_by_path,
     upload_to_shade,
-    logical_path,
-    ShadeFSSession,
-    ensure_dir,
+    create_collection,
+    delete_collection,
+    add_assets_to_collection,
+    publish_collection,
 )
 
 FOLDER_NAME = "UC Shade"
-SCRIPT_NAME = "Create Share Link"
+SCRIPT_NAME = "Create Collection Link"
 VERSION = "v1.0"
 
 
@@ -57,15 +57,10 @@ def clip_name(item):
         return ""
 
 
-def _slug(text):
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-._")
-    return (slug or "share")[:80]
-
-
-class ShadeShareOptionsDialog(QtWidgets.QDialog):
+class ShadeCollectionOptionsDialog(QtWidgets.QDialog):
     def __init__(self, default_name="", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Shade Share Link")
+        self.setWindowTitle("Shade Collection Link")
         self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
         self.setMinimumWidth(640)
 
@@ -74,7 +69,7 @@ class ShadeShareOptionsDialog(QtWidgets.QDialog):
         layout.addLayout(form)
 
         self.name_edit = QtWidgets.QLineEdit(default_name)
-        form.addRow("Share Name:", self.name_edit)
+        form.addRow("Collection Name:", self.name_edit)
 
         pw_row = QtWidgets.QHBoxLayout()
         self.pw_enabled = QtWidgets.QCheckBox("Enable")
@@ -97,7 +92,7 @@ class ShadeShareOptionsDialog(QtWidgets.QDialog):
         buttons.addStretch()
         cancel_btn = QtWidgets.QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
-        ok_btn = QtWidgets.QPushButton("Create Share")
+        ok_btn = QtWidgets.QPushButton("Create Collection")
         ok_btn.setDefault(True)
         ok_btn.clicked.connect(self._on_accept)
         buttons.addWidget(cancel_btn)
@@ -109,14 +104,14 @@ class ShadeShareOptionsDialog(QtWidgets.QDialog):
 
     def _on_accept(self):
         if not self.name_edit.text().strip():
-            QtWidgets.QMessageBox.warning(self, "Validation", "Share name cannot be empty.")
+            QtWidgets.QMessageBox.warning(self, "Validation", "Collection name cannot be empty.")
             return
         if self.pw_enabled.isChecked() and not self.pw_edit.text().strip():
             QtWidgets.QMessageBox.warning(self, "Validation", "Enter a password or disable Password.")
             return
         self.accept()
 
-    def share_name(self):
+    def collection_name(self):
         return self.name_edit.text().strip()
 
     def password(self):
@@ -125,16 +120,16 @@ class ShadeShareOptionsDialog(QtWidgets.QDialog):
         return ""
 
 
-class ShadeShareResultsDialog(QtWidgets.QDialog):
-    def __init__(self, share_url, password="", share_name="", parent=None):
+class ShadeCollectionResultsDialog(QtWidgets.QDialog):
+    def __init__(self, share_url, password="", collection_name="", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Shade Share Link Created")
+        self.setWindowTitle("Shade Collection Link Created")
         self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
         self.setMinimumWidth(640)
 
         layout = QtWidgets.QVBoxLayout(self)
-        if share_name:
-            title = QtWidgets.QLabel(f"<b>{share_name}</b> is ready to send.")
+        if collection_name:
+            title = QtWidgets.QLabel(f"<b>{collection_name}</b> is ready to send.")
             title.setTextFormat(QtCore.Qt.RichText)
             layout.addWidget(title)
 
@@ -149,7 +144,7 @@ class ShadeShareResultsDialog(QtWidgets.QDialog):
         copy_url.clicked.connect(lambda: self._copy(self.url_edit.text(), copy_url))
         url_row.addWidget(self.url_edit)
         url_row.addWidget(copy_url)
-        form.addRow("Share URL:", url_row)
+        form.addRow("Collection URL:", url_row)
 
         pw_row = QtWidgets.QHBoxLayout()
         self.pw_edit = QtWidgets.QLineEdit(password or "(no password set)")
@@ -182,7 +177,7 @@ class ShadeShareResultsDialog(QtWidgets.QDialog):
 
     @staticmethod
     def _copy_both(url, password, button):
-        parts = [f"Share: {url}"]
+        parts = [f"Collection: {url}"]
         if password:
             parts.append(f"Password: {password}")
         QtWidgets.QApplication.clipboard().setText("\n".join(parts))
@@ -234,8 +229,32 @@ def export_item(item, export_dir, preset_path):
     return new_files[0]
 
 
-def create_share(selection):
+def resolve_asset(api_key, drive_id, name, dest_path=None, attempts=6):
+    """Find an asset by name, falling back to the upload path while Shade indexes it."""
+    last_error = None
+    for attempt in range(attempts):
+        asset = find_asset_for_clip(api_key, drive_id, name)
+        if asset and asset.get("id"):
+            return asset
+        if dest_path:
+            try:
+                asset = _get_asset_by_path(api_key, drive_id, dest_path)
+                if asset and asset.get("id"):
+                    return asset
+            except Exception as e:
+                last_error = e
+        if attempt + 1 < attempts:
+            time.sleep(2)
+    if last_error:
+        log(f"Asset lookup for '{name}' failed: {last_error}")
+    return None
+
+
+def create_collection_link(selection):
     print(f"\n[{SCRIPT_NAME}] {VERSION} — Start")
+    collection_id = None
+    api_key = None
+    drive_id = None
     try:
         if not selection:
             show_message("Please select one or more clips, sequences, or segments first.")
@@ -259,53 +278,48 @@ def create_share(selection):
         else:
             default_name = f"{project_token} Review ({len(entries)} items) — {date_str}"
 
-        options = ShadeShareOptionsDialog(default_name=default_name)
+        options = ShadeCollectionOptionsDialog(default_name=default_name)
         if options.exec() != QtWidgets.QDialog.Accepted:
-            log("Share link creation cancelled.")
+            log("Collection link creation cancelled.")
             return
 
-        share_name = options.share_name()
+        collection_name = options.collection_name()
         password = options.password()
-        folder = f"/SHARES/{date_str}/{now.strftime('%H%M%S')}-{_slug(share_name)}"
-        log(f"Share folder: {folder}")
 
-        session = ShadeFSSession(api_key, drive_id)
-        ensure_dir(session, drive_id, f"{folder}/.keep", session.email())
-
+        asset_ids = []
         included = []
         missing = []
         for entry in entries:
             asset = find_asset_for_clip(api_key, drive_id, entry["name"])
-            if asset and asset.get("path"):
-                filename = os.path.basename(logical_path(drive_id, asset["path"]))
-                destination = f"{folder}/{filename}"
-                try:
-                    copy_shade_file(api_key, drive_id, asset["path"], destination)
-                    included.append(entry["name"])
-                    log(f"Copied existing Shade asset '{entry['name']}'")
-                    continue
-                except Exception as e:
-                    log(f"Copy failed for '{entry['name']}', will export instead: {e}")
-            missing.append(entry)
+            if asset and asset.get("id"):
+                asset_ids.append(asset["id"])
+                included.append(entry["name"])
+                log(f"Using existing Shade asset '{entry['name']}'")
+            else:
+                missing.append(entry)
 
         if missing:
             preset_path = cfg.get("preset_path_h264")
             if not preset_path or not os.path.exists(preset_path):
                 raise RuntimeError(f"Missing export preset: {preset_path}")
-            # Stage beside the job delivery folders, then remove it once Shade has the file.
-            export_dir = tempfile.mkdtemp(prefix=f"shade_share_{now.strftime('%H%M%S')}_")
+            export_dir = tempfile.mkdtemp(prefix=f"shade_collection_{now.strftime('%H%M%S')}_")
             log(f"Staging export in {export_dir}")
             try:
                 for entry in missing:
                     try:
                         local_path = export_item(entry["export_target"], export_dir, preset_path)
                         filename = os.path.basename(local_path)
+                        dest_path = f"/CONFORMS/{filename}"
                         upload_to_shade(
                             local_path,
                             project_token,
                             auto_stack=False,
-                            dest_path=f"{folder}/{filename}",
+                            dest_path=dest_path,
                         )
+                        asset = resolve_asset(api_key, drive_id, entry["name"], dest_path=dest_path)
+                        if not asset or not asset.get("id"):
+                            raise RuntimeError("Upload finished, but Shade has not indexed the asset yet.")
+                        asset_ids.append(asset["id"])
                         included.append(entry["name"])
                         log(f"Exported and uploaded '{entry['name']}'")
                     except Exception as e:
@@ -316,37 +330,48 @@ def create_share(selection):
                 else:
                     log(f"Left staging export at {export_dir}")
 
-        if not included:
-            show_message("No assets could be copied or uploaded for a share link.")
+        if not asset_ids:
+            show_message("No assets could be found or uploaded for a collection.")
             return
 
-        share = create_public_share(
+        collection_id = create_collection(api_key, drive_id, collection_name)
+        add_assets_to_collection(api_key, drive_id, collection_id, asset_ids)
+        collection = publish_collection(
             api_key,
             drive_id,
-            folder,
-            name=share_name,
+            collection_id,
             password=password or None,
         )
-        url = share.get("url")
+        url = collection.get("url")
         if not url:
-            raise RuntimeError("Shade did not return a share id.")
+            raise RuntimeError("Shade did not return a collection link.")
 
         try:
             QtWidgets.QApplication.clipboard().setText(url)
         except Exception as e:
             log(f"Could not copy URL to clipboard: {e}")
 
-        log(f"Share link created: {url}")
+        log(f"Collection link created: {url}")
         log(f"Items: {', '.join(included)}")
-        ShadeShareResultsDialog(share_url=url, password=password, share_name=share_name).exec()
+        collection_id = None
+        ShadeCollectionResultsDialog(
+            share_url=url,
+            password=password,
+            collection_name=collection_name,
+        ).exec()
     except Exception as e:
         log(f"Failed: {e}\n{traceback.format_exc()}")
-        show_message(f"Shade Create Share Error: {e}")
+        if collection_id and api_key and drive_id:
+            try:
+                delete_collection(api_key, drive_id, collection_id)
+            except Exception as cleanup_error:
+                log(f"Could not remove unfinished collection {collection_id}: {cleanup_error}")
+        show_message(f"Shade Create Collection Error: {e}")
 
     print(f"[{SCRIPT_NAME}] Done.")
 
 
-def scope_share(selection):
+def scope_collection(selection):
     return any(isinstance(item, (flame.PyClip, flame.PySequence, flame.PySegment)) for item in selection)
 
 
@@ -357,9 +382,9 @@ def get_media_panel_custom_ui_actions():
             "actions": [
                 {
                     "name": SCRIPT_NAME,
-                    "order": 2,
-                    "isVisible": scope_share,
-                    "execute": create_share,
+                    "order": 3,
+                    "isVisible": scope_collection,
+                    "execute": create_collection_link,
                     "minimumVersion": "2025",
                 }
             ],

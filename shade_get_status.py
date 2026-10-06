@@ -118,7 +118,7 @@ def get_media_panel_custom_ui_actions():
             "actions": [
                 {
                     "name": SCRIPT_NAME,
-                    "order": 6,
+                    "order": 7,
                     "isVisible": scope_clip_or_sequence,
                     "execute": shade_get_status,
                     "minimumVersion": "2025",

@@ -308,7 +308,7 @@ def get_media_panel_custom_ui_actions():
             "actions": [
                 {
                     "name": SCRIPT_NAME,
-                    "order": 5,
+                    "order": 6,
                     "isVisible": scope_clip_or_sequence,
                     "execute": add_markers,
                     "minimumVersion": "2025",
