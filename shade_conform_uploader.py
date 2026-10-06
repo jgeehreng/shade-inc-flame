@@ -299,6 +299,7 @@ def get_media_panel_custom_ui_actions():
             "actions": [
                 {
                     "name": "Conform Uploader",
+                    "order": 1,
                     "isVisible": scope_sequence,
                     "execute": start_upload,
                     "minimumVersion": "2025",

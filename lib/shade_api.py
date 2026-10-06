@@ -283,6 +283,14 @@ def ensure_dir(session: ShadeFSSession, drive_id: str, dest_path: str, email: st
     log("[ensure_dir] Directory ready")
 
 
+def _http_error(response, action):
+    """Include the response body. ShadeFS 422s otherwise surface as "unknown"."""
+    body = (response.text or "").strip().replace("\n", " ")
+    if len(body) > 800:
+        body = body[:800] + "..."
+    return RuntimeError(f"{action} failed: {response.status_code} {response.reason}: {body}")
+
+
 def initiate_multipart(session: ShadeFSSession, drive_id: str, dest_path: str, part_size: int = DEFAULT_PART_SIZE):
     """Initiate a multipart upload session."""
     log("[initiate_multipart] Initiating multipart upload.")
@@ -291,10 +299,11 @@ def initiate_multipart(session: ShadeFSSession, drive_id: str, dest_path: str, p
         headers={"Authorization": f"Bearer {session.token()}"},
         json={
             "path": dest_path,
-            "PART_SIZE": part_size,
+            "partSize": part_size,
         }
     )
-    r.raise_for_status()
+    if not r.ok:
+        raise _http_error(r, "initiate_multipart")
     data = r.json()
     log(f"[initiate_multipart] Upload initiated: partSize={data['partSize']}")
     return data["partSize"], data["token"]
@@ -308,7 +317,8 @@ def presign_part(drive_id: str, finish_token: str, session: ShadeFSSession, part
         headers={"Authorization": f"Bearer {session.token()}"},
         params={"token": finish_token},
     )
-    r.raise_for_status()
+    if not r.ok:
+        raise _http_error(r, "presign_part")
     return r.json()
 
 
@@ -342,7 +352,8 @@ def complete_multipart(drive_id: str, finish_token: str, session: ShadeFSSession
         params={"token": finish_token},
         json={"parts": parts},
     )
-    r.raise_for_status()
+    if not r.ok:
+        raise _http_error(r, "complete_multipart")
     log("[complete_multipart] Upload fully complete.")
 
 # ---------------------------------------------------------------------
@@ -714,3 +725,217 @@ def _maybe_auto_stack_asset(api_key: str, drive_id: str, dest_path: str, filenam
     log(f"[auto_stack] Stacking asset {new_asset_id} onto {target_asset_id}")
     _stack_asset(api_key, drive_id, new_asset_id, target_asset_id)
     log("[auto_stack] Stacked successfully.")
+
+
+# ---------------------------------------------------------------------
+# Paths, approval status, and published share links
+# ---------------------------------------------------------------------
+
+APPROVAL_STATUS_NAME = "Approval Status"
+PUBLISH_BASE = "https://app.shade.inc/publish"
+# Commenting preset: view, download, and comment, including stack versions.
+REVIEW_SHARE_ACTIONS = [
+    "read",
+    "comment",
+    "download",
+    "read_asset_details",
+    "read_metadata",
+    "view_stack_versions",
+]
+
+_APPROVAL_FIELD_CACHE = {}
+
+
+def drive_path(drive_id: str, path: str) -> str:
+    """Shade file routes require /{drive_id}/... paths."""
+    path = path if str(path).startswith("/") else f"/{path}"
+    prefix = f"/{drive_id}"
+    if path == prefix or path.startswith(prefix + "/"):
+        return path
+    return f"{prefix}{path}"
+
+
+def logical_path(drive_id: str, path: str) -> str:
+    """ShadeFS and published links use paths without the drive id prefix."""
+    path = path if str(path).startswith("/") else f"/{path}"
+    prefix = f"/{drive_id}"
+    if path == prefix:
+        return "/"
+    if path.startswith(prefix + "/"):
+        return path[len(prefix):] or "/"
+    return path
+
+
+def _auth_headers(api_key: str) -> dict:
+    return {
+        "Authorization": api_key,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+
+def get_metadata_attributes(api_key: str, drive_id: str):
+    r = requests.get(
+        f"{API_BASE}/workspaces/drives/{drive_id}/metadata",
+        headers=_auth_headers(api_key),
+        timeout=20,
+    )
+    if not r.ok:
+        raise _http_error(r, "get_metadata_attributes")
+    data = r.json()
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("metadata", "attributes", "data"):
+            if isinstance(data.get(key), list):
+                return data[key]
+    return []
+
+
+def get_approval_status_field(api_key: str, drive_id: str) -> dict:
+    """Return the drive's Approval Status select field and its option ids."""
+    cached = _APPROVAL_FIELD_CACHE.get(drive_id)
+    if cached:
+        return cached
+
+    field = next(
+        (attr for attr in get_metadata_attributes(api_key, drive_id) if attr.get("name") == APPROVAL_STATUS_NAME),
+        None,
+    )
+    if not field:
+        raise RuntimeError(
+            f"No '{APPROVAL_STATUS_NAME}' metadata field on this Shade drive."
+        )
+
+    names_by_id = {}
+    ids_by_name = {}
+    for option in field.get("options") or []:
+        option_id = option.get("id")
+        option_name = option.get("name")
+        if option_id and option_name:
+            names_by_id[option_id] = option_name
+            ids_by_name[option_name] = option_id
+
+    parsed = {
+        "id": field["id"],
+        "names_by_id": names_by_id,
+        "ids_by_name": ids_by_name,
+    }
+    _APPROVAL_FIELD_CACHE[drive_id] = parsed
+    return parsed
+
+
+def get_asset_record(api_key: str, drive_id: str, asset_id: str) -> dict:
+    r = requests.get(
+        f"{API_BASE}/assets/{asset_id}",
+        headers=_auth_headers(api_key),
+        params={"drive_id": drive_id},
+        timeout=20,
+    )
+    if not r.ok:
+        raise _http_error(r, "get_asset")
+    return r.json()
+
+
+def find_asset_for_clip(api_key: str, drive_id: str, clip_name: str):
+    """Exact name match, hydrating path from the asset record when search omits it."""
+    asset = _find_asset_by_name(api_key, drive_id, clip_name)
+    if not asset or not asset.get("id"):
+        return None
+    if not asset.get("path"):
+        try:
+            full = get_asset_record(api_key, drive_id, asset["id"])
+            if full:
+                asset = full
+        except Exception as e:
+            log(f"[find_asset_for_clip] Asset record lookup failed for '{clip_name}': {e}")
+    return asset
+
+
+def get_approval_status(api_key: str, drive_id: str, asset_id: str):
+    """Return the Approval Status option name, or None when unset."""
+    field = get_approval_status_field(api_key, drive_id)
+    asset = get_asset_record(api_key, drive_id, asset_id)
+    option_id = (asset.get("custom_metadata") or {}).get(field["id"])
+    if not option_id:
+        return None
+    return field["names_by_id"].get(option_id)
+
+
+def set_approval_status(api_key: str, drive_id: str, asset_id: str, option_name):
+    """Set Approval Status to an option name. None clears it."""
+    field = get_approval_status_field(api_key, drive_id)
+    if option_name is None:
+        value = None
+    else:
+        value = field["ids_by_name"].get(option_name)
+        if not value:
+            known = ", ".join(sorted(field["ids_by_name"]))
+            raise RuntimeError(f"Unknown Approval Status '{option_name}'. Options: {known}")
+
+    r = requests.put(
+        f"{API_BASE}/assets/metadata/values",
+        headers=_auth_headers(api_key),
+        json={
+            "drive_id": drive_id,
+            "asset_ids": [asset_id],
+            "metadata_attributes": [{"id": field["id"], "value": value}],
+        },
+        timeout=20,
+    )
+    if not r.ok:
+        raise _http_error(r, "set_approval_status")
+    log(f"[set_approval_status] {asset_id} -> {option_name or 'cleared'}")
+    return r.json()
+
+
+def copy_shade_file(api_key: str, drive_id: str, source: str, destination: str):
+    """Server-side copy. Paths may be logical or drive-prefixed."""
+    r = requests.post(
+        f"{API_BASE}/files/copy",
+        headers=_auth_headers(api_key),
+        json={
+            "drive_id": drive_id,
+            "source": drive_path(drive_id, source),
+            "destination": drive_path(drive_id, destination),
+        },
+        timeout=60,
+    )
+    if not r.ok:
+        raise _http_error(r, "copy_shade_file")
+    log(f"[copy_shade_file] {logical_path(drive_id, source)} -> {logical_path(drive_id, destination)}")
+    return r.json() if r.text and r.text != "null" else None
+
+
+def create_public_share(
+    api_key: str,
+    drive_id: str,
+    path: str,
+    name: str,
+    password: str = None,
+    allowed_actions=None,
+):
+    """Create a published link for one file or folder and attach its public URL."""
+    body = {
+        "path": logical_path(drive_id, path),
+        "is_public_enabled": True,
+        "allowed_actions": list(allowed_actions or REVIEW_SHARE_ACTIONS),
+        "name": name,
+    }
+    if password:
+        body["password"] = password
+
+    r = requests.post(
+        f"{API_BASE}/workspaces/drives/{drive_id}/public-file-shares",
+        headers=_auth_headers(api_key),
+        json=body,
+        timeout=30,
+    )
+    if not r.ok:
+        raise _http_error(r, "create_public_share")
+    share = r.json()
+    share_id = share.get("id")
+    if share_id:
+        share["url"] = f"{PUBLISH_BASE}/{share_id}"
+    log(f"[create_public_share] {share.get('name')}: {share.get('url')}")
+    return share
