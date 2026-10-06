@@ -13,6 +13,7 @@ from PySide6 import QtWidgets
 from lib.shade_api import (
     validate_config,
     get_or_create_drive,
+    get_project_token,
     search_shade_assets,
     get_asset_comments,
 )
@@ -136,7 +137,7 @@ def shade_get_comments(selection):
 
         cfg = validate_config()
         api_key = cfg.get("shade_api_key") or cfg.get("api_key")
-        project_token = str(flame.projects.current_project.nickname)
+        project_token = get_project_token(cfg, flame.projects.current_project)
         drive_id = get_or_create_drive(cfg, project_token)
         log(f"Connected to Shade (drive: {drive_id}, project: {project_token})")
 

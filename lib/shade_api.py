@@ -18,6 +18,9 @@ import time
 
 API_BASE = "https://api.shade.inc"
 FS_BASE = "https://fs.shade.inc"
+# ShadeFS JWTs last about five minutes. Refresh before they get inside this window.
+TOKEN_MIN_VALID_SECONDS = 240
+DEFAULT_PART_SIZE = 64 * 1024 * 1024
 
 GLOBAL_CONFIG_PATH = "/opt/Autodesk/shared/python/shade/config/shared_config.json"
 USER_CONFIG_PATH = os.path.expanduser("~/flame/python/shade/user_config.json")
@@ -31,7 +34,7 @@ DEFAULT_CONFIG = {
     "jobs_folder": "/Volumes/vfx/UC_Jobs",
     "project_token": "nickname",
     "debug": False,
-    "preset_path_h264": "/opt/Autodesk/presets/2026.2/export/presets/flame/movie_file/MP4/Baseline (1080p 12Mbits).xml",
+    "preset_path_h264": "/opt/Autodesk/shared/python/shade/presets/UC H264 10Mbits.xml",
     "preset_path_prores": "/opt/Autodesk/presets/2026.2/export/presets/flame/movie_file/Apple Final Cut Pro/Final Cut Pro (Apple ProRes 4444 XQ).xml",
 }
 
@@ -82,12 +85,21 @@ def validate_config():
 # Project Token Helper
 # ---------------------------------------------------------------------
 
+def _flame_value(value):
+    """Unwrap a Flame attribute. str() on those objects includes angle brackets."""
+    try:
+        if hasattr(value, "get_value"):
+            return value.get_value()
+    except Exception:
+        pass
+    return value
+
+
 def get_project_token(cfg, flame_project):
     """Return the correct token value for the given Flame project."""
     mode = cfg.get("project_token") or "nickname"
-    if mode == "name":
-        return str(flame_project.name)
-    return str(flame_project.nickname)
+    raw = flame_project.name if mode == "name" else flame_project.nickname
+    return str(_flame_value(raw))
 
 # ---------------------------------------------------------------------
 # Drive Handling
@@ -133,10 +145,6 @@ def get_or_create_drive(cfg, drive_name):
         "type": "magic",
         "icon_type": "color",
         "public_template_key": "video_production",
-        "default_storage_backend": {
-            "provider": "r2",
-            "bucket": "shade-prod-enam"
-        },
     }
 
     try:
@@ -228,17 +236,45 @@ def _b64url_json(token: str) -> dict:
         log(f"[b64url_json] Failed to decode token: {e}")
         return {}
 
+
+def _token_seconds_remaining(token: str) -> float:
+    """Seconds until a ShadeFS JWT expires. Missing exp is treated as expired."""
+    exp = _b64url_json(token).get("exp")
+    if not exp:
+        return 0
+    return float(exp) - time.time()
+
+
+class ShadeFSSession:
+    """ShadeFS auth that refreshes the JWT before it expires."""
+
+    def __init__(self, api_key: str, drive_id: str):
+        self.api_key = api_key
+        self.drive_id = drive_id
+        self._token = None
+
+    def token(self) -> str:
+        if (
+            not self._token
+            or _token_seconds_remaining(self._token) < TOKEN_MIN_VALID_SECONDS
+        ):
+            self._token = fetch_shadefs_token(self.api_key, self.drive_id)
+        return self._token
+
+    def email(self) -> str:
+        return _b64url_json(self.token()).get("sub")
+
 # ---------------------------------------------------------------------
 # ShadeFS Helpers (mkdir + multipart upload)
 # ---------------------------------------------------------------------
 
-def ensure_dir(token: str, drive_id: str, dest_path: str, email: str):
+def ensure_dir(session: ShadeFSSession, drive_id: str, dest_path: str, email: str):
     """Ensure remote directory exists before upload."""
     directory = os.path.dirname(dest_path)
     log(f"[ensure_dir] Ensuring directory exists: {directory}")
     r = requests.post(
         f"{FS_BASE}/{drive_id}/fs/mkdir",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {session.token()}"},
         params={"email": email, "path": directory, "drive": drive_id},
         json={}
     )
@@ -247,18 +283,15 @@ def ensure_dir(token: str, drive_id: str, dest_path: str, email: str):
     log("[ensure_dir] Directory ready")
 
 
-def initiate_multipart(token: str, drive_id: str, dest_path: str, part_size: int = 8 * 1024 * 1024):
+def initiate_multipart(session: ShadeFSSession, drive_id: str, dest_path: str, part_size: int = DEFAULT_PART_SIZE):
     """Initiate a multipart upload session."""
     log("[initiate_multipart] Initiating multipart upload.")
-    mime = "video/mp4" if dest_path.lower().endswith(".mp4") else "application/octet-stream"
     r = requests.post(
         f"{FS_BASE}/{drive_id}/upload/multipart",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {session.token()}"},
         json={
             "path": dest_path,
-            "partSize": part_size,
-            "mime": mime,
-            "driveId": drive_id,
+            "PART_SIZE": part_size,
         }
     )
     r.raise_for_status()
@@ -267,12 +300,12 @@ def initiate_multipart(token: str, drive_id: str, dest_path: str, part_size: int
     return data["partSize"], data["token"]
 
 
-def presign_part(drive_id: str, finish_token: str, auth_token: str, part_number: int):
+def presign_part(drive_id: str, finish_token: str, session: ShadeFSSession, part_number: int):
     """Request presigned upload URL for one part."""
     log(f"[presign_part] Requesting presigned URL for part {part_number}.")
     r = requests.post(
         f"{FS_BASE}/{drive_id}/upload/multipart/part/{part_number}",
-        headers={"Authorization": f"Bearer {auth_token}"},
+        headers={"Authorization": f"Bearer {session.token()}"},
         params={"token": finish_token},
     )
     r.raise_for_status()
@@ -300,12 +333,12 @@ def upload_part(url: str, headers: dict, file_path: str, start: int, end: int):
     return etag
 
 
-def complete_multipart(drive_id: str, finish_token: str, auth_token: str, parts):
+def complete_multipart(drive_id: str, finish_token: str, session: ShadeFSSession, parts):
     """Finalize multipart upload on the ShadeFS server."""
     log("[complete_multipart] Finalizing upload on server.")
     r = requests.post(
         f"{FS_BASE}/{drive_id}/upload/multipart/complete",
-        headers={"Authorization": f"Bearer {auth_token}"},
+        headers={"Authorization": f"Bearer {session.token()}"},
         params={"token": finish_token},
         json={"parts": parts},
     )
@@ -325,7 +358,7 @@ def upload_to_shade(local_path: str, project_token: str, progress_callback=None,
         local_path: Local filesystem path to the file to upload
         project_token: Project identifier (nickname or name) to determine drive
         progress_callback: Optional callback function(percent, message) for progress updates
-        auto_stack: Whether to automatically stack versions (currently not implemented)
+        auto_stack: Stack the new asset onto the previous version when that version exists
         dest_path: Optional destination path on Shade. If not provided, defaults to /CONFORMS/{filename}
     """
     log(f"[upload_to_shade] Starting upload for project '{project_token}'")
@@ -337,22 +370,21 @@ def upload_to_shade(local_path: str, project_token: str, progress_callback=None,
     # --------------------------------------------------------
     # Step 1: Request a temporary ShadeFS token for the drive
     # --------------------------------------------------------
-    token = fetch_shadefs_token(api_key, drive_id)
-    decoded = _b64url_json(token)
-    email = decoded.get("sub")
+    session = ShadeFSSession(api_key, drive_id)
+    email = session.email()
 
     # --------------------------------------------------------
     # Step 2: Ensure the folder structure exists on Shade
     # --------------------------------------------------------
     if dest_path is None:
         dest_path = f"/CONFORMS/{os.path.basename(local_path)}"
-    ensure_dir(token, drive_id, dest_path, email)
+    ensure_dir(session, drive_id, dest_path, email)
 
     # --------------------------------------------------------
     # Step 3: Initiate multipart upload
     # --------------------------------------------------------
     file_size = os.path.getsize(local_path)
-    part_size, finish_token = initiate_multipart(token, drive_id, dest_path)
+    part_size, finish_token = initiate_multipart(session, drive_id, dest_path)
     total_parts = (file_size + part_size - 1) // part_size
     completed = []
 
@@ -366,7 +398,7 @@ def upload_to_shade(local_path: str, project_token: str, progress_callback=None,
         start = (part_number - 1) * part_size
         end = min(start + part_size, file_size)
 
-        presigned = presign_part(drive_id, finish_token, token, part_number)
+        presigned = presign_part(drive_id, finish_token, session, part_number)
         etag = upload_part(presigned["url"], presigned.get("headers") or {}, local_path, start, end)
         completed.append({"PartNumber": part_number, "ETag": etag})
 
@@ -380,7 +412,7 @@ def upload_to_shade(local_path: str, project_token: str, progress_callback=None,
     # --------------------------------------------------------
     # Step 5: Complete multipart upload
     # --------------------------------------------------------
-    complete_multipart(drive_id, finish_token, token, completed)
+    complete_multipart(drive_id, finish_token, session, completed)
     log(f"[upload_to_shade] Upload complete for {os.path.basename(local_path)}")
 
     # --------------------------------------------------------
@@ -498,6 +530,44 @@ def get_asset_comments(api_key, drive_id, asset_id, fps=None):
 # -----------------------------------------------
 # Version stacking helpers
 # -----------------------------------------------
+
+def next_version_name(api_key: str, drive_id: str, clip_name: str):
+    """
+    Return the next versioned name when Shade already has this version or a higher one.
+
+    Names without a trailing version tag, and names newer than anything in Shade,
+    return None so the caller keeps the current name.
+    Example: clip shot_v01 becomes shot_v02 when Shade's highest match is v01,
+    or shot_v04 when Shade already has v03.
+    """
+    match = re.search(r"([vV])(\d+)$", clip_name)
+    if not match:
+        return None
+
+    prefix = match.group(1)
+    current_version = int(match.group(2))
+    base_no_version = clip_name[:match.start()]
+    results = search_shade_assets(api_key, drive_id, base_no_version or clip_name, limit=50)
+    pattern = re.compile(rf"^{re.escape(base_no_version)}[vV](\d+)$")
+
+    max_found = None
+    for result in results:
+        shade_name = result.get("name", "")
+        no_ext = os.path.splitext(shade_name)[0]
+        version_match = pattern.match(no_ext)
+        if not version_match:
+            continue
+        try:
+            version_num = int(version_match.group(1))
+        except Exception:
+            continue
+        if max_found is None or version_num > max_found:
+            max_found = version_num
+
+    if max_found is None or max_found < current_version:
+        return None
+    return f"{base_no_version}{prefix}{max_found + 1:02d}"
+
 
 def _prev_version_name(filename_no_ext: str) -> str or None:
     """

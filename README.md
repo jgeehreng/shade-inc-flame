@@ -17,10 +17,9 @@ This package provides several Python scripts that integrate Shade's review and c
 - **Autodesk Flame 2025 or later**
 - **Python 3** (bundled with Flame)
 - **Shade API Key** (get one at [Shade Academy](https://academy.shade.inc/developers#authenticating-with-the-python-sdk))
-- **Required Python packages** (automatically installed via `shade_packages.py`):
+- **Required Python packages** (automatically installed via `shade_packages.py` when missing):
   - `requests`
   - `PyJWT`
-  - `shade-python-sdk` (optional, if using Shade SDK features)
 
 ## Installation
 
@@ -43,8 +42,12 @@ This package provides several Python scripts that integrate Shade's review and c
    │   └── shared_config.json
    ├── shade_config_editor.py
    ├── shade_conform_uploader.py
+   ├── shade_shot_uploader.py
    ├── shade_get_comments.py
-   └── shade_mediahub_uploader.py
+   ├── shade_mediahub_uploader.py
+   ├── shade_version_up_tester.py
+   ├── test_shade_drive_creation.py
+   └── test_shade_drive_creation_jobs.py
    ```
 
 3. **First-time setup**: Launch Flame and use the config editor to set up your Shade API key and workspace.
@@ -81,7 +84,7 @@ User-specific settings are stored at:
 
 Access the configuration editor from Flame's main menu:
 ```
-Main Menu → Shade → Edit Config
+Main Menu → UC Shade → Edit Config
 ```
 
 The editor provides:
@@ -94,7 +97,7 @@ The editor provides:
 
 ### 1. Shade Config Editor (`shade_config_editor.py`)
 
-**Location**: Main Menu → Shade → Edit Config
+**Location**: Main Menu → UC Shade → Edit Config
 
 A GUI tool for managing both global and user-specific Shade configuration. Features:
 - Separate tabs for global and user settings
@@ -104,7 +107,7 @@ A GUI tool for managing both global and user-specific Shade configuration. Featu
 
 ### 2. Shade Conform Uploader (`shade_conform_uploader.py`)
 
-**Location**: Media Panel → Shade → Upload Conform to Shade
+**Location**: Media Panel → UC Shade → Upload Conform to Shade
 
 Uploads selected sequences to Shade with automatic versioning:
 - Exports sequences to H.264 format
@@ -115,7 +118,7 @@ Uploads selected sequences to Shade with automatic versioning:
 
 **Usage:**
 1. Select one or more sequences in the Media Panel
-2. Right-click → Shade → Upload Conform to Shade
+2. Right-click → UC Shade → Upload Conform to Shade
 3. Confirm the upload
 4. Wait for export and upload to complete
 
@@ -137,7 +140,7 @@ Uploads clips (PyClip) as shots with auto-stack enabled:
 
 ### 3. Shade MediaHub Uploader (`shade_mediahub_uploader.py`)
 
-**Location**: MediaHub → Shade → Upload to Shade
+**Location**: MediaHub → UC Shade → Upload to Shade
 
 Uploads files and folders directly from MediaHub to Shade:
 - Supports both individual files and entire folders
@@ -147,7 +150,7 @@ Uploads files and folders directly from MediaHub to Shade:
 
 **Usage:**
 1. Select files or folders in MediaHub
-2. Right-click → Shade → Upload to Shade
+2. Right-click → UC Shade → Upload to Shade
 3. Confirm the upload
 4. Files upload with preserved directory structure
 
@@ -160,8 +163,8 @@ Uploads files and folders directly from MediaHub to Shade:
 ### 4. Shade Get Comments (`shade_get_comments.py`)
 
 **Location**: 
-- Timeline → Shade → Get Comments (for segments)
-- Media Panel → Shade → Get Comments (for sequences)
+- Timeline → UC Shade → Get Comments (for segments)
+- Media Panel → UC Shade → Get Comments (for sequences)
 
 Fetches comments from Shade and creates Flame markers:
 - Searches Shade for assets matching sequence/segment names
@@ -172,7 +175,7 @@ Fetches comments from Shade and creates Flame markers:
 
 **Usage:**
 1. Select sequences or segments in Timeline or Media Panel
-2. Right-click → Shade → Get Comments
+2. Right-click → UC Shade → Get Comments
 3. Markers are automatically created at comment positions
 4. Items with comments are colored for easy identification
 
@@ -205,9 +208,9 @@ The library merges configuration in this order (later values override earlier):
 
 ## Package Management (`lib/shade_packages.py`)
 
-Automatically installs required Python packages on first launch. Handles:
+Automatically installs `requests` and `PyJWT` when they are missing. Handles:
 - Detection of missing packages
-- Installation to Flame's versioned Python environment
+- Installation into Flame's versioned site-packages, including Python 3.13 on Flame 2027
 - Sudo password prompt for system-wide installation
 - Support for Flame version detection
 
@@ -270,17 +273,22 @@ shade/
 │   └── shade_packages.py     # Package installer
 ├── config/
 │   └── shared_config.json    # Global configuration
-├── shade_config_editor.py    # Configuration GUI
-├── shade_conform_uploader.py # Sequence upload tool
-├── shade_get_comments.py     # Comment synchronization
-└── shade_mediahub_uploader.py # MediaHub upload tool
+├── shade_config_editor.py    # Configuration GUI (v1.1.1)
+├── shade_conform_uploader.py # Sequence upload tool (v1.5.2)
+├── shade_shot_uploader.py    # Shot upload tool (v1.0.0)
+├── shade_get_comments.py     # Comment synchronization (v1.1.2)
+├── shade_mediahub_uploader.py # MediaHub upload tool (v1.3.1)
+├── shade_version_up_tester.py # Version-up test action
+├── test_shade_drive_creation.py
+└── test_shade_drive_creation_jobs.py
 ```
 
 ## Version History
 
-- **v1.5.1** - Conform Uploader: Auto-version-up, improved export workflow
-- **v1.3.0** - MediaHub Uploader: Folder support, path preservation
-- **v1.1.1** - Get Comments: Segment support, caching, duration handling
+- **v1.5.2** - Conform Uploader: version-up uses the highest Shade version, shared H.264 preset
+- **v1.3.1** - MediaHub Uploader: folder support, path preservation, project token from config
+- **v1.1.2** - Get Comments: segment support, caching, duration handling, project token from config
+- **v1.0.0** - Shot Uploader: uploads to `/SHOTS/` and stacks onto the previous version
 
 ## Support
 

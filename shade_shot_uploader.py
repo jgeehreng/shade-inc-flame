@@ -124,10 +124,8 @@ def ensure_folder(parent, name):
 # ----------------------------------------------------------
 def auto_version_up_flame(selection, cfg, project_token):
     """
-    For each clip in selection:
-    - use full clip name (e.g., 'shot_v01')
-    - search Shade for exact name (extension stripped)
-    - if found, bump to next version locally before export
+    Rename each selected clip to the next Shade version when this version,
+    or a higher one, already exists. Shared with the conform uploader.
     """
     try:
         api_key = cfg.get("shade_api_key") or cfg.get("api_key")
@@ -138,41 +136,19 @@ def auto_version_up_flame(selection, cfg, project_token):
             clip_name = raw_name.strip()
             log(f"[auto_version_up_flame] Checking '{clip_name}'")
 
-            m = re.search(r"([vV])(\d+)$", clip_name)
-            if not m:
+            if not re.search(r"[vV]\d+$", clip_name):
                 log(f"[auto_version_up_flame] Name '{clip_name}' does not end with a version tag like 'v01'. Skipping.")
                 continue
 
-            prefix = m.group(1)
-            current_version = int(m.group(2))
-            base_no_version = clip_name[:m.start()]
-
             try:
-                results = shade_api.search_shade_assets(api_key, drive_id, base_no_version, limit=50)
+                new_name = shade_api.next_version_name(api_key, drive_id, clip_name)
             except Exception as e:
                 log(f"[auto_version_up_flame] Shade search failed for '{clip_name}': {e}")
                 continue
 
-            max_found = current_version
-            pattern = re.compile(rf"^{re.escape(base_no_version)}[vV](\d+)$")
-            for r in results:
-                shade_name = r.get("name", "")
-                no_ext = os.path.splitext(shade_name)[0]
-                mver = pattern.match(no_ext)
-                if mver:
-                    try:
-                        ver_num = int(mver.group(1))
-                        if ver_num > max_found:
-                            max_found = ver_num
-                    except Exception:
-                        pass
-
-            if max_found == current_version:
-                log(f"No higher version found in Shade for '{base_no_version}'. Keeping name.")
+            if not new_name:
+                log(f"No existing version found in Shade for '{clip_name}'. Keeping name.")
                 continue
-
-            next_version = max_found + 1
-            new_name = f"{base_no_version}{prefix}{next_version:02d}"
 
             try:
                 if hasattr(item, "name") and hasattr(item.name, "set_value"):
@@ -246,12 +222,7 @@ def start_upload(selection):
         cfg = shade_api.validate_config()
         project = flame.projects.current_project
 
-        token_mode = cfg.get("project_token", "nickname")
-        project_token = (
-            attr(project.nickname)
-            if token_mode == "nickname"
-            else attr(project.name)
-        )
+        project_token = shade_api.get_project_token(cfg, project)
 
         jobs_folder = cfg.get("jobs_folder", "/Volumes/vfx/UC_Jobs")
 
@@ -289,7 +260,7 @@ def start_upload(selection):
             progress.update_total_file(idx, len(files), local_path)
             try:
                 filename = os.path.basename(local_path)
-                dest_path = f"/TEST/{filename}"
+                dest_path = f"/SHOTS/{filename}"
 
                 shade_api.upload_to_shade(
                     local_path,

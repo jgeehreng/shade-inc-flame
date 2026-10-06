@@ -3,7 +3,7 @@
 """
 Shade Config Editor (Unified Global + User)
 Uppercut VFX Pipeline
-Accessible from Main Menu -> Shade -> Edit Config
+Accessible from Main Menu -> UC Shade -> Edit Config
 Now with:
 - Project Token (nickname | name)
 - Debug Mode (bool)
@@ -104,7 +104,7 @@ class ShadeConfigEditor(QtWidgets.QDialog):
             GLOBAL_CONFIG_PATH,
             {
                 "jobs_folder": "/Volumes/vfx/UC_Jobs",
-                "preset_path_h264": "/opt/Autodesk/shared/flame_presets/h264.json",
+                "preset_path_h264": "/opt/Autodesk/shared/python/shade/presets/UC H264 10Mbits.xml",
                 "preset_path_prores": "/opt/Autodesk/shared/flame_presets/prores4444.json",
                 "shade_base_url": SHADE_API_BASE,
                 # new ones

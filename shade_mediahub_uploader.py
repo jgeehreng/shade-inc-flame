@@ -156,11 +156,7 @@ def start_mediahub_upload(selection):
         cfg = shade_api.validate_config()
         project = flame.projects.current_project
 
-        # project token from config (nickname default)
-        token_mode = cfg.get("project_token", "nickname")
-        project_token = (
-            str(project.nickname) if token_mode == "nickname" else str(project.name)
-        )
+        project_token = shade_api.get_project_token(cfg, project)
 
         # collect real file paths from MediaHub selection
         files = collect_paths_from_selection(selection)

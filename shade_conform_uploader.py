@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Shade Conform Uploader v1.5.1 — Uppercut VFX Pipeline
+Shade Conform Uploader v1.5.2 — Uppercut VFX Pipeline
 - export selection into FROM_FLAME/date/time
 - write files to /Volumes/.../FROM_FLAME/date  (no double time)
 - upload to Shade
@@ -125,14 +125,8 @@ def ensure_folder(parent, name):
 # ----------------------------------------------------------
 def auto_version_up_flame(selection, cfg, project_token):
     """
-    For each item in selection:
-
-    - Take the full clip name from Flame (e.g. 'vlv_adam_v01')
-    - Search Shade using that full name as the query
-    - Strip extensions from Shade results ('.mp4', '.mov', etc.)
-    - If an extension-less Shade result exactly matches the clip name,
-      then version-up by +1 (v01 -> v02) and rename the item in Flame.
-    - If no exact match, leave the name as-is.
+    Rename each selected item to the next Shade version when this version,
+    or a higher one, already exists. Shared with the shot uploader.
     """
     try:
         api_key = cfg.get("shade_api_key") or cfg.get("api_key")
@@ -144,36 +138,19 @@ def auto_version_up_flame(selection, cfg, project_token):
             clip_name = raw_name.strip()
             log(f"[auto_version_up_flame] Checking '{clip_name}'")
 
-            # Require a trailing version at end of name, e.g. v01 or V02
-            m = re.search(r"([vV])(\d+)$", clip_name)
-            if not m:
+            if not re.search(r"[vV]\d+$", clip_name):
                 log(f"[auto_version_up_flame] Name '{clip_name}' does not end with a version tag like 'v01'. Skipping.")
                 continue
 
-            prefix = m.group(1)
-            current_version = int(m.group(2))
-            base_no_version = clip_name[:m.start()]
-            search_key = clip_name
-
             try:
-                results = shade_api.search_shade_assets(api_key, drive_id, search_key, limit=25)
+                new_name = shade_api.next_version_name(api_key, drive_id, clip_name)
             except Exception as e:
                 log(f"[auto_version_up_flame] Shade search failed for '{clip_name}': {e}")
                 continue
 
-            cleaned_results = []
-            for r in results:
-                shade_name = r.get("name", "")
-                no_ext = os.path.splitext(shade_name)[0]
-                cleaned_results.append(no_ext)
-
-            # Option A: only version-up if exact name already exists in Shade
-            if search_key not in cleaned_results:
+            if not new_name:
                 log(f"No existing version found in Shade for '{clip_name}'. Keeping name.")
                 continue
-
-            next_version = current_version + 1
-            new_name = f"{base_no_version}{prefix}{next_version:02d}"
 
             try:
                 if hasattr(item, "name") and hasattr(item.name, "set_value"):
@@ -247,13 +224,7 @@ def start_upload(selection):
         cfg = shade_api.validate_config()
         project = flame.projects.current_project
 
-        # Determine which project token to use
-        token_mode = cfg.get("project_token", "nickname")
-        project_token = (
-            attr(project.nickname)
-            if token_mode == "nickname"
-            else attr(project.name)
-        )
+        project_token = shade_api.get_project_token(cfg, project)
 
         jobs_folder = cfg.get("jobs_folder", "/Volumes/vfx/UC_Jobs")
 

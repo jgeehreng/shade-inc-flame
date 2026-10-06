@@ -5,7 +5,6 @@ Flame Launch hook: installs required Python packages for Shade integration.
 Prompts for administrator password via GUI dialog (falls back to terminal if GUI unavailable).
 Targets Flame's versioned site-packages.
 Installs if missing:
-  - shade-python-sdk (import names: shade, shade_sdk)
   - PyJWT (import name: jwt)
   - requests (import name: requests)
 """
@@ -30,7 +29,6 @@ REQUIRED_PACKAGES: List[Tuple[str, str]] = [
     ("jwt", "PyJWT"),
     ("requests", "requests"),
 ]
-SHADE_IMPORT_CANDIDATES = ("shade", "shade_sdk")
 
 
 def _is_module_available(module_name: str) -> bool:
@@ -39,10 +37,6 @@ def _is_module_available(module_name: str) -> bool:
 
 def _get_missing_packages() -> List[Tuple[str, str]]:
     missing: List[Tuple[str, str]] = []
-    # shade SDK can import as 'shade' or 'shade_sdk'
-    if not any(_is_module_available(name) for name in SHADE_IMPORT_CANDIDATES):
-        missing.append(("shade", "shade-python-sdk"))
-
     for import_name, pip_name in REQUIRED_PACKAGES:
         if not _is_module_available(import_name):
             missing.append((import_name, pip_name))
@@ -178,7 +172,7 @@ def _install_missing_with_sudo(missing: List[Tuple[str, str]]) -> None:
         candidate_pip = f"/opt/Autodesk/python/{flame_version}/bin/pip3"
         if os.path.exists(candidate_pip):
             pip_executable = candidate_pip
-        for minor in (11, 10, 9, 8):
+        for minor in (13, 12, 11, 10, 9, 8):
             candidate_site = f"/opt/Autodesk/python/{flame_version}/lib/python3.{minor}/site-packages"
             if os.path.isdir(candidate_site):
                 flame_site_packages = candidate_site
